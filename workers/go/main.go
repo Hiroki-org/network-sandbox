@@ -90,12 +90,14 @@ var (
 	requestQueue   chan struct{}
 )
 
+// init はパッケージで使用する Prometheus メトリクス（requestsTotal、requestDuration、currentLoad）を登録します。
 func init() {
 	prometheus.MustRegister(requestsTotal)
 	prometheus.MustRegister(requestDuration)
 	prometheus.MustRegister(currentLoad)
 }
 
+// getEnvInt は環境変数 key を整数として読み取り、値が設定されていないか変換に失敗した場合は defaultVal を返します。
 func getEnvInt(key string, defaultVal int) int {
 	if val := os.Getenv(key); val != "" {
 		if i, err := strconv.Atoi(val); err == nil {
@@ -105,6 +107,8 @@ func getEnvInt(key string, defaultVal int) int {
 	return defaultVal
 }
 
+// getEnvFloatは指定した環境変数を読み取り、浮動小数点値に変換して返します。
+// 環境変数が設定されていないか有効な浮動小数点に変換できない場合はdefaultValを返します。
 func getEnvFloat(key string, defaultVal float64) float64 {
 	if val := os.Getenv(key); val != "" {
 		if f, err := strconv.ParseFloat(val, 64); err == nil {
@@ -114,6 +118,9 @@ func getEnvFloat(key string, defaultVal float64) float64 {
 	return defaultVal
 }
 
+// loadConfig は環境変数から初期 Configuration を構築して返します。
+// 使用する環境変数とデフォルト値: MAX_CONCURRENT_REQUESTS=10, RESPONSE_DELAY_MS=100, FAILURE_RATE=0.0, QUEUE_SIZE=50。
+// 環境変数が未設定または無効な場合は対応するデフォルト値が使われます。
 func loadConfig() *Configuration {
 	return &Configuration{
 		MaxConcurrentRequests: getEnvInt("MAX_CONCURRENT_REQUESTS", 10),
@@ -151,6 +158,8 @@ func (c *Configuration) Get() Configuration {
 	}
 }
 
+// handleTask は POST /task リクエストを処理し、エントリーポイントのキュー受け入れと同時実行制御を行った上で疑似的な処理遅延と故障をシミュレートして JSON レスポンスを返します。
+// キューが満杯または同時実行上限超過時は 503 を、リクエストボディが不正な場合は 400 を、シミュレート故障時は 500 を返し、成功時は処理情報を含む TaskResponse を返します。
 func handleTask(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -244,6 +253,11 @@ func handleTask(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleHealth は現在の同時処理数とキュー深度を評価してサービスのヘルス状態を判定し、JSON で結果を返します。
+// 
+// 判定は現在の負荷比率（現在の同時処理数 / MaxConcurrentRequests）とキュー比率（キュー深度 / QueueSize）に基づき、
+// いずれかの比率が 0.9 以上で "unhealthy"、いずれかが 0.7 以上で "degraded"、それ以外は "healthy" を返します。
+// レスポンスは Content-Type: application/json を設定し、HealthResponse（Status, CurrentLoad, QueueDepth）をエンコードして返します.
 func handleHealth(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -275,6 +289,11 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleConfig はランタイム設定の取得と更新を行う HTTP ハンドラです。
+// GET リクエストでは現在の設定を JSON で返します。
+// PUT または POST リクエストではリクエストボディの JSON を Configuration としてデコードし、妥当であれば設定を反映して更新後の設定を JSON で返し、更新内容をログに記録します。
+// ボディのデコードに失敗した場合は 400 Bad Request を返します。
+// その他の HTTP メソッドに対しては 405 Method Not Allowed を返します。
 func handleConfig(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -295,6 +314,7 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// 設定されるヘッダー: Access-Control-Allow-Origin="*", Access-Control-Allow-Methods="GET, POST, PUT, OPTIONS", Access-Control-Allow-Headers="Content-Type".
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -310,6 +330,9 @@ func corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// main はワーカー用の HTTP サーバーを初期化して起動します。
+// 環境変数から構成とワーカー情報を読み込み、要求キューとメトリクスを初期化し、/task、/health、/config、/metrics のハンドラを登録して CORS を適用します。
+// 指定したポート（PORT 環境変数、未指定時は 8080）でリクエストを受け付け、SIGINT/SIGTERM 受信時にグレースフルシャットダウンを行います。
 func main() {
 	// Note: As of Go 1.20+, the global random is automatically seeded
 	// No need for explicit rand.Seed call
