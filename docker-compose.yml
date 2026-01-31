@@ -1,0 +1,170 @@
+services:
+  # Load Balancer
+  load-balancer:
+    build: ./load-balancer
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+      - WORKER_URLS=http://worker-go-1:8080,http://worker-go-2:8080,http://worker-rust-1:8080,http://worker-rust-2:8080,http://worker-python-1:8080,http://worker-python-2:8080
+      - ALGORITHM=round-robin
+      - HEALTH_CHECK_INTERVAL=5s
+    depends_on:
+      - worker-go-1
+      - worker-go-2
+      - worker-rust-1
+      - worker-rust-2
+      - worker-python-1
+      - worker-python-2
+    networks:
+      - sandbox-network
+    restart: unless-stopped
+
+  # Go Workers
+  worker-go-1:
+    build: ./workers/go
+    environment:
+      - PORT=8080
+      - WORKER_NAME=go-worker-1
+      - WORKER_COLOR=#3B82F6
+      - MAX_CONCURRENT_REQUESTS=10
+      - RESPONSE_DELAY_MS=100
+      - FAILURE_RATE=0.0
+      - QUEUE_SIZE=50
+    networks:
+      - sandbox-network
+    restart: unless-stopped
+
+  worker-go-2:
+    build: ./workers/go
+    environment:
+      - PORT=8080
+      - WORKER_NAME=go-worker-2
+      - WORKER_COLOR=#6366F1
+      - MAX_CONCURRENT_REQUESTS=15
+      - RESPONSE_DELAY_MS=80
+      - FAILURE_RATE=0.0
+      - QUEUE_SIZE=50
+    networks:
+      - sandbox-network
+    restart: unless-stopped
+
+  # Rust Workers
+  worker-rust-1:
+    build: ./workers/rust
+    environment:
+      - PORT=8080
+      - WORKER_NAME=rust-worker-1
+      - WORKER_COLOR=#F97316
+      - MAX_CONCURRENT_REQUESTS=12
+      - RESPONSE_DELAY_MS=90
+      - FAILURE_RATE=0.0
+      - QUEUE_SIZE=50
+    networks:
+      - sandbox-network
+    restart: unless-stopped
+
+  worker-rust-2:
+    build: ./workers/rust
+    environment:
+      - PORT=8080
+      - WORKER_NAME=rust-worker-2
+      - WORKER_COLOR=#EAB308
+      - MAX_CONCURRENT_REQUESTS=8
+      - RESPONSE_DELAY_MS=120
+      - FAILURE_RATE=0.05
+      - QUEUE_SIZE=40
+    networks:
+      - sandbox-network
+    restart: unless-stopped
+
+  # Python Workers
+  worker-python-1:
+    build: ./workers/python
+    environment:
+      - PORT=8080
+      - WORKER_NAME=python-worker-1
+      - WORKER_COLOR=#10B981
+      - MAX_CONCURRENT_REQUESTS=8
+      - RESPONSE_DELAY_MS=150
+      - FAILURE_RATE=0.0
+      - QUEUE_SIZE=40
+    networks:
+      - sandbox-network
+    restart: unless-stopped
+
+  worker-python-2:
+    build: ./workers/python
+    environment:
+      - PORT=8080
+      - WORKER_NAME=python-worker-2
+      - WORKER_COLOR=#14B8A6
+      - MAX_CONCURRENT_REQUESTS=10
+      - RESPONSE_DELAY_MS=100
+      - FAILURE_RATE=0.02
+      - QUEUE_SIZE=50
+    networks:
+      - sandbox-network
+    restart: unless-stopped
+
+  # React Client
+  client:
+    build: ./client
+    ports:
+      - "3000:80"
+    depends_on:
+      - load-balancer
+    networks:
+      - sandbox-network
+    restart: unless-stopped
+
+  # Redis (Optional - for distributed state)
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - sandbox-network
+    restart: unless-stopped
+
+  # Prometheus
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-lifecycle'
+    networks:
+      - sandbox-network
+    restart: unless-stopped
+
+  # Grafana
+  grafana:
+    image: grafana/grafana:10.2.2
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    depends_on:
+      - prometheus
+    networks:
+      - sandbox-network
+    restart: unless-stopped
+
+networks:
+  sandbox-network:
+    driver: bridge
+
+volumes:
+  prometheus-data:
+  grafana-data:
