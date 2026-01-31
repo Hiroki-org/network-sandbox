@@ -215,7 +215,7 @@ function App() {
         setStatus({
           ...status,
           workers: status.workers.map((w) =>
-            w.name === workerName ? { ...w, enabled } : w
+            w.name === workerName ? { ...w, enabled } : w,
           ),
         });
       }
@@ -391,7 +391,7 @@ function App() {
                 {status?.workers?.map((worker) => (
                   <div
                     key={worker.id || worker.name}
-                    className={`bg-slate-700 rounded-lg p-4 border-l-4 transition-opacity ${!worker.enabled ? 'opacity-50' : ''}`}
+                    className={`bg-slate-700 rounded-lg p-4 border-l-4 transition-opacity ${!worker.enabled ? "opacity-50" : ""}`}
                     style={{ borderColor: worker.color }}
                   >
                     <div className="flex items-center justify-between mb-2">
@@ -401,12 +401,14 @@ function App() {
                           className={`w-3 h-3 rounded-full ${getStatusColor(worker)}`}
                         />
                         <button
-                          onClick={() => toggleWorker(worker.name, !worker.enabled)}
-                          className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${worker.enabled ? 'bg-blue-600' : 'bg-slate-500'}`}
-                          title={worker.enabled ? '無効にする' : '有効にする'}
+                          onClick={() =>
+                            toggleWorker(worker.name, !worker.enabled)
+                          }
+                          className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${worker.enabled ? "bg-blue-600" : "bg-slate-500"}`}
+                          title={worker.enabled ? "無効にする" : "有効にする"}
                         >
                           <span
-                            className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${worker.enabled ? 'translate-x-5' : 'translate-x-1'}`}
+                            className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${worker.enabled ? "translate-x-5" : "translate-x-1"}`}
                           />
                         </button>
                       </div>
@@ -424,7 +426,8 @@ function App() {
                             className="h-2 rounded-full transition-all"
                             style={{
                               width: `${Math.min(
-                                (worker.currentLoad / (worker.maxLoad || 1)) * 100,
+                                (worker.currentLoad / (worker.maxLoad || 1)) *
+                                  100,
                                 100,
                               )}%`,
                               backgroundColor: worker.color,
@@ -443,14 +446,17 @@ function App() {
                           min="1"
                           max="10"
                           value={worker.weight}
-                          onChange={(e) => updateWorkerWeight(worker.name, Number(e.target.value))}
+                          onChange={(e) =>
+                            updateWorkerWeight(
+                              worker.name,
+                              Number(e.target.value),
+                            )
+                          }
                           className="w-14 bg-slate-600 rounded px-2 py-1 text-center"
                         />
                       </div>
                       {!worker.enabled && (
-                        <div className="text-yellow-400 text-sm">
-                          ⏸ 無効
-                        </div>
+                        <div className="text-yellow-400 text-sm">⏸ 無効</div>
                       )}
                       {worker.circuitOpen && (
                         <div className="text-red-400 text-sm">
