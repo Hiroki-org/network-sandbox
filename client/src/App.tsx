@@ -51,6 +51,13 @@ const algorithms = [
   { id: "random", name: "ランダム", desc: "ランダムに選択" },
 ];
 
+/**
+ * 負荷分散システムの状態を表示し、負荷生成・アルゴリズム切替・ワーカー管理・タスクログを操作するダッシュボード UI を提供する。
+ *
+ * コンポーネントは WebSocket によるライブステータス更新、初期ステータスのフェッチ、定期的なタスク送信（負荷生成）、および各種操作（アルゴリズム変更、ワーカーの有効化/無効化、重み変更）を行うクライアント側の振る舞いを含む。
+ *
+ * @returns ダッシュボード全体を表す React 要素（JSX）
+ */
 function App() {
   const [status, setStatus] = useState<LoadBalancerStatus | null>(null);
   const [tasks, setTasks] = useState<TaskResult[]>([]);

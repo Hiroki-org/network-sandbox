@@ -56,6 +56,18 @@ PORT = int(os.getenv("PORT", "8080"))
 
 
 def load_config() -> Configuration:
+    """
+    環境変数からランタイム設定を読み込み、それを反映した Configuration インスタンスを生成して返す。
+    
+    環境変数:
+    - MAX_CONCURRENT_REQUESTS: 最大同時処理数（未設定時は 10）
+    - RESPONSE_DELAY_MS: 基本応答遅延（ミリ秒、未設定時は 100）
+    - FAILURE_RATE: 擬似失敗確率（0.0〜1.0、未設定時は 0.0）
+    - QUEUE_SIZE: キュー容量（未設定時は 50）
+    
+    Returns:
+        Configuration: 読み取られた環境変数値（未設定時は上記デフォルト）を設定した Configuration インスタンス。
+    """
     return Configuration(
         max_concurrent_requests=int(os.getenv("MAX_CONCURRENT_REQUESTS", "10")),
         response_delay_ms=int(os.getenv("RESPONSE_DELAY_MS", "100")),
@@ -104,6 +116,12 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup():
+    """
+    起動時にキュー制御を初期化し、ワーカーと設定の起動情報を出力する。
+    
+    グローバル変数 `queue_semaphore` を現在の `config.queue_size` を上限とする `asyncio.Semaphore` に設定し、
+    `WORKER_NAME`、`PORT`、`WORKER_COLOR` と現在の設定値（`max_concurrent_requests`、`response_delay_ms`、`failure_rate`、`queue_size`）を標準出力に表示する。
+    """
     global queue_semaphore
     queue_semaphore = asyncio.Semaphore(config.queue_size)
     print(f"Starting {WORKER_NAME} on port {PORT} (color: {WORKER_COLOR})")
@@ -117,6 +135,20 @@ async def startup():
 
 @app.post("/task")
 async def handle_task(task: TaskRequest):
+    """
+    受け取ったタスクをキューと同時実行制限のもとで処理して結果を返す。
+    
+    Parameters:
+        task (TaskRequest): 処理対象のタスク（識別子 `id` とオプションの `weight` を含む）。
+    
+    Returns:
+        TaskResponse: 成功時にタスクの処理結果（`id`, `worker`, `color`, `processingTimeMs`, `timestamp`）を含むレスポンス。
+    
+    Raises:
+        HTTPException: キューが満杯で受け付けられなかった場合は 503（"Queue full - service overloaded"）。
+        HTTPException: 同時実行数が許容上限を超えた場合は 503（"Max concurrent requests exceeded"）。
+        HTTPException: シミュレートされた障害が発生した場合は 500（"Simulated failure"）。
+    """
     global active_requests, queue_depth
 
     # Try to acquire queue slot with timeout (non-blocking)
@@ -198,6 +230,17 @@ async def handle_task(task: TaskRequest):
 
 @app.get("/health")
 async def handle_health():
+    """
+    現在の処理負荷とキュー深度を評価してサービスの健全性ステータスを返す。
+    
+    現在の同時処理数とキュー深度をそれぞれ設定上限と比較し、比率に応じてステータスを決定する:
+    - 比率が 0.9 以上なら "unhealthy"
+    - 比率が 0.7 以上なら "degraded"
+    - それ以外は "healthy"
+    
+    Returns:
+        HealthResponse: 現在のステータスを表す `status`、現在の同時処理数を示す `currentLoad`、およびキューの深さを示す `queueDepth` を含むオブジェクト。
+    """
     with config_lock:
         max_concurrent = config.max_concurrent_requests
         max_queue = config.queue_size
@@ -223,6 +266,12 @@ async def handle_health():
 
 @app.get("/config")
 async def get_config():
+    """
+    現在のランタイム設定を取得する。
+    
+    Returns:
+        Configuration: 現在のランタイム設定オブジェクト
+    """
     with config_lock:
         return config
 
@@ -230,6 +279,19 @@ async def get_config():
 @app.post("/config")
 @app.put("/config")
 async def update_config(new_config: Configuration):
+    """
+    与えられた設定値を検証し、妥当なフィールドのみを現在のランタイム設定に反映して返す。
+    
+    Parameters:
+        new_config (Configuration): 更新を試みる設定値。以下の検証が行われ、条件を満たすフィールドだけが適用される:
+            - `max_concurrent_requests` が 0 より大きい場合に適用
+            - `response_delay_ms` が 0 以上の場合に適用
+            - `failure_rate` が 0.0 以上 1.0 以下の場合に適用
+            - `queue_size` が 0 より大きい場合に適用
+    
+    Returns:
+        Configuration: 更新後のランタイム設定インスタンス。
+    """
     global config
     with config_lock:
         if new_config.max_concurrent_requests > 0:
@@ -246,6 +308,12 @@ async def update_config(new_config: Configuration):
 
 @app.get("/metrics")
 async def metrics():
+    """
+    Prometheus の最新メトリクスを含む HTTP レスポンスを返す。
+    
+    Returns:
+    	HTTPレスポンス: 最新の Prometheus メトリクス本文（Prometheus テキスト/バイナリ形式）を含む Response オブジェクト。
+    """
     return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
