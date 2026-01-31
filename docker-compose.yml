@@ -6,9 +6,13 @@ services:
       - "8000:8000"
     environment:
       - PORT=8000
-      - WORKER_URLS=http://worker-go-1:8080,http://worker-go-2:8080,http://worker-rust-1:8080,http://worker-rust-2:8080,http://worker-python-1:8080,http://worker-python-2:8080
-      - ALGORITHM=round-robin
-      - HEALTH_CHECK_INTERVAL=5s
+      - LB_ALGORITHM=round-robin
+      - WORKER_GO_1_URL=http://worker-go-1:8080
+      - WORKER_GO_2_URL=http://worker-go-2:8080
+      - WORKER_RUST_1_URL=http://worker-rust-1:8080
+      - WORKER_RUST_2_URL=http://worker-rust-2:8080
+      - WORKER_PYTHON_1_URL=http://worker-python-1:8080
+      - WORKER_PYTHON_2_URL=http://worker-python-2:8080
     depends_on:
       - worker-go-1
       - worker-go-2
@@ -136,9 +140,9 @@ services:
     ports:
       - "9090:9090"
     command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--web.enable-lifecycle'
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-lifecycle"
     networks:
       - sandbox-network
     restart: unless-stopped

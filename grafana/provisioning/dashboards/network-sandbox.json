@@ -88,7 +88,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "rate(loadbalancer_requests_total[1m])",
+          "expr": "rate(lb_requests_total[1m])",
           "legendFormat": "{{status}}",
           "refId": "A"
         }
@@ -175,8 +175,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "loadbalancer_active_workers",
-          "legendFormat": "Active Workers",
+          "expr": "lb_worker_health",
+          "legendFormat": "{{worker}}",
           "refId": "A"
         },
         {
@@ -184,8 +184,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "loadbalancer_healthy_workers",
-          "legendFormat": "Healthy Workers",
+          "expr": "sum(lb_worker_health)",
+          "legendFormat": "Total Healthy",
           "refId": "B"
         }
       ],
@@ -429,10 +429,7 @@
       "id": 5,
       "options": {
         "legend": {
-          "calcs": [
-            "mean",
-            "max"
-          ],
+          "calcs": ["mean", "max"],
           "displayMode": "table",
           "placement": "right",
           "showLegend": true
@@ -448,7 +445,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.95, rate(loadbalancer_request_duration_ms_bucket[1m]))",
+          "expr": "histogram_quantile(0.95, rate(lb_request_duration_ms_bucket[1m]))",
           "legendFormat": "p95 Response Time",
           "refId": "A"
         },
@@ -457,7 +454,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "histogram_quantile(0.50, rate(loadbalancer_request_duration_ms_bucket[1m]))",
+          "expr": "histogram_quantile(0.50, rate(lb_request_duration_ms_bucket[1m]))",
           "legendFormat": "p50 Response Time",
           "refId": "B"
         }
@@ -469,9 +466,7 @@
   "refresh": "5s",
   "schemaVersion": 38,
   "style": "dark",
-  "tags": [
-    "network-sandbox"
-  ],
+  "tags": ["network-sandbox"],
   "templating": {
     "list": []
   },

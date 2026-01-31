@@ -1,4 +1,10 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, {
+  useState,
+  useEffect,
+  useCallback,
+  useRef,
+  useMemo,
+} from "react";
 
 interface Worker {
   id: string;
@@ -11,6 +17,7 @@ interface Worker {
   healthy: boolean;
   circuitOpen: boolean;
   weight: number;
+  enabled: boolean;
 }
 
 interface TaskResult {
@@ -30,14 +37,18 @@ interface LoadBalancerStatus {
   successRate: number;
 }
 
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
-const WS_URL = process.env.REACT_APP_WS_URL || 'ws://localhost:8000/ws';
+const API_URL = process.env.REACT_APP_API_URL || "http://localhost:8000";
+const WS_URL = process.env.REACT_APP_WS_URL || "ws://localhost:8000/ws";
 
 const algorithms = [
-  { id: 'round-robin', name: 'ラウンドロビン', desc: '順番に振り分け' },
-  { id: 'least-connections', name: '最小接続', desc: '最も空いているワーカーへ' },
-  { id: 'weighted', name: '重み付け', desc: '重みに基づいて振り分け' },
-  { id: 'random', name: 'ランダム', desc: 'ランダムに選択' },
+  { id: "round-robin", name: "ラウンドロビン", desc: "順番に振り分け" },
+  {
+    id: "least-connections",
+    name: "最小接続",
+    desc: "最も空いているワーカーへ",
+  },
+  { id: "weighted", name: "重み付け", desc: "重みに基づいて振り分け" },
+  { id: "random", name: "ランダム", desc: "ランダムに選択" },
 ];
 
 function App() {
@@ -59,7 +70,7 @@ function App() {
 
       ws.onopen = () => {
         setConnected(true);
-        console.log('WebSocket connected');
+        console.log("WebSocket connected");
       };
 
       ws.onmessage = (event) => {
@@ -67,18 +78,18 @@ function App() {
           const data = JSON.parse(event.data);
           setStatus(data);
         } catch (e) {
-          console.error('Failed to parse WebSocket message:', e);
+          console.error("Failed to parse WebSocket message:", e);
         }
       };
 
       ws.onclose = () => {
         setConnected(false);
-        console.log('WebSocket disconnected, reconnecting...');
+        console.log("WebSocket disconnected, reconnecting...");
         setTimeout(connect, 3000);
       };
 
       ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
+        console.error("WebSocket error:", error);
       };
     };
 
@@ -101,7 +112,7 @@ function App() {
           setStatus(data);
         }
       } catch (e) {
-        console.error('Failed to fetch status:', e);
+        console.error("Failed to fetch status:", e);
       }
     };
 
@@ -112,8 +123,8 @@ function App() {
     const taskId = `task-${++taskIdRef.current}`;
     try {
       const response = await fetch(`${API_URL}/task`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: taskId, weight: taskWeight }),
       });
 
@@ -128,12 +139,12 @@ function App() {
         setTasks((prev) => [
           {
             id: taskId,
-            worker: result.worker || 'unknown',
-            color: '#ef4444',
+            worker: result.worker || "unknown",
+            color: "#ef4444",
             processingTimeMs: 0,
             timestamp: new Date().toISOString(),
             success: false,
-            error: result.error || 'Unknown error',
+            error: result.error || "Unknown error",
           },
           ...prev.slice(0, 99),
         ]);
@@ -142,12 +153,12 @@ function App() {
       setTasks((prev) => [
         {
           id: taskId,
-          worker: 'unknown',
-          color: '#ef4444',
+          worker: "unknown",
+          color: "#ef4444",
           processingTimeMs: 0,
           timestamp: new Date().toISOString(),
           success: false,
-          error: 'Network error',
+          error: "Network error",
         },
         ...prev.slice(0, 99),
       ]);
@@ -174,35 +185,73 @@ function App() {
   const changeAlgorithm = async (algorithm: string) => {
     try {
       const response = await fetch(`${API_URL}/algorithm`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ algorithm }),
       });
       if (response.ok) {
         setStatus((prev) => (prev ? { ...prev, algorithm } : null));
       }
     } catch (e) {
-      console.error('Failed to change algorithm:', e);
+      console.error("Failed to change algorithm:", e);
+    }
+  };
+
+  const toggleWorker = async (workerName: string, enabled: boolean) => {
+    try {
+      const response = await fetch(`${API_URL}/workers/${workerName}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled }),
+      });
+      if (response.ok && status) {
+        setStatus({
+          ...status,
+          workers: status.workers.map((w) =>
+            w.name === workerName ? { ...w, enabled } : w
+          ),
+        });
+      }
+    } catch (e) {
+      console.error("Failed to toggle worker:", e);
+    }
+  };
+
+  const updateWorkerWeight = async (workerName: string, weight: number) => {
+    try {
+      await fetch(`${API_URL}/workers/${workerName}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ weight }),
+      });
+    } catch (e) {
+      console.error("Failed to update worker weight:", e);
     }
   };
 
   const getStatusColor = (worker: Worker) => {
-    if (worker.circuitOpen) return 'bg-red-500';
-    if (!worker.healthy) return 'bg-yellow-500';
+    if (worker.circuitOpen) return "bg-red-500";
+    if (!worker.healthy) return "bg-yellow-500";
     const loadRatio = worker.currentLoad / worker.maxLoad;
-    if (loadRatio >= 0.9) return 'bg-red-500';
-    if (loadRatio >= 0.7) return 'bg-yellow-500';
-    return 'bg-green-500';
+    if (loadRatio >= 0.9) return "bg-red-500";
+    if (loadRatio >= 0.7) return "bg-yellow-500";
+    return "bg-green-500";
   };
 
-  const successCount = tasks.filter((t) => t.success).length;
-  const failureCount = tasks.filter((t) => !t.success).length;
-  const avgResponseTime =
-    tasks.length > 0
-      ? Math.round(
-          tasks.reduce((sum, t) => sum + t.processingTimeMs, 0) / tasks.length
-        )
-      : 0;
+  const stats = useMemo(() => {
+    const successCount = tasks.filter((t) => t.success).length;
+    const failureCount = tasks.filter((t) => !t.success).length;
+    const avgResponseTime =
+      tasks.length > 0
+        ? Math.round(
+            tasks.reduce((sum, t) => sum + t.processingTimeMs, 0) /
+              tasks.length,
+          )
+        : 0;
+    return { successCount, failureCount, avgResponseTime };
+  }, [tasks]);
+
+  const { successCount, failureCount, avgResponseTime } = stats;
 
   return (
     <div className="min-h-screen bg-slate-900 text-white p-6">
@@ -216,11 +265,11 @@ function App() {
           <div className="flex items-center gap-2 mt-2">
             <span
               className={`w-3 h-3 rounded-full ${
-                connected ? 'bg-green-500' : 'bg-red-500'
+                connected ? "bg-green-500" : "bg-red-500"
               }`}
             />
             <span className="text-sm text-slate-400">
-              {connected ? '接続中' : '接続待ち...'}
+              {connected ? "接続中" : "接続待ち..."}
             </span>
           </div>
         </header>
@@ -263,11 +312,11 @@ function App() {
                   onClick={() => setIsRunning(!isRunning)}
                   className={`w-full py-3 px-4 rounded-lg font-semibold transition ${
                     isRunning
-                      ? 'bg-red-600 hover:bg-red-700'
-                      : 'bg-blue-600 hover:bg-blue-700'
+                      ? "bg-red-600 hover:bg-red-700"
+                      : "bg-blue-600 hover:bg-blue-700"
                   }`}
                 >
-                  {isRunning ? '停止' : '開始'}
+                  {isRunning ? "停止" : "開始"}
                 </button>
                 <button
                   onClick={sendTask}
@@ -289,8 +338,8 @@ function App() {
                     onClick={() => changeAlgorithm(algo.id)}
                     className={`w-full text-left px-4 py-3 rounded-lg transition ${
                       status?.algorithm === algo.id
-                        ? 'bg-blue-600'
-                        : 'bg-slate-700 hover:bg-slate-600'
+                        ? "bg-blue-600"
+                        : "bg-slate-700 hover:bg-slate-600"
                     }`}
                   >
                     <div className="font-medium">{algo.name}</div>
@@ -334,15 +383,26 @@ function App() {
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                 {status?.workers?.map((worker) => (
                   <div
-                    key={worker.id}
-                    className="bg-slate-700 rounded-lg p-4 border-l-4"
+                    key={worker.id || worker.name}
+                    className={`bg-slate-700 rounded-lg p-4 border-l-4 transition-opacity ${!worker.enabled ? 'opacity-50' : ''}`}
                     style={{ borderColor: worker.color }}
                   >
                     <div className="flex items-center justify-between mb-2">
                       <span className="font-medium">{worker.name}</span>
-                      <span
-                        className={`w-3 h-3 rounded-full ${getStatusColor(worker)}`}
-                      />
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`w-3 h-3 rounded-full ${getStatusColor(worker)}`}
+                        />
+                        <button
+                          onClick={() => toggleWorker(worker.name, !worker.enabled)}
+                          className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${worker.enabled ? 'bg-blue-600' : 'bg-slate-500'}`}
+                          title={worker.enabled ? '無効にする' : '有効にする'}
+                        >
+                          <span
+                            className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${worker.enabled ? 'translate-x-5' : 'translate-x-1'}`}
+                          />
+                        </button>
+                      </div>
                     </div>
                     <div className="space-y-2">
                       <div>
@@ -357,8 +417,8 @@ function App() {
                             className="h-2 rounded-full transition-all"
                             style={{
                               width: `${Math.min(
-                                (worker.currentLoad / worker.maxLoad) * 100,
-                                100
+                                (worker.currentLoad / (worker.maxLoad || 1)) * 100,
+                                100,
                               )}%`,
                               backgroundColor: worker.color,
                             }}
@@ -369,10 +429,22 @@ function App() {
                         <span className="text-slate-400">キュー</span>
                         <span>{worker.queueDepth}</span>
                       </div>
-                      <div className="flex justify-between text-sm">
+                      <div className="flex justify-between items-center text-sm">
                         <span className="text-slate-400">重み</span>
-                        <span>{worker.weight}</span>
+                        <input
+                          type="number"
+                          min="1"
+                          max="10"
+                          value={worker.weight}
+                          onChange={(e) => updateWorkerWeight(worker.name, Number(e.target.value))}
+                          className="w-14 bg-slate-600 rounded px-2 py-1 text-center"
+                        />
                       </div>
+                      {!worker.enabled && (
+                        <div className="text-yellow-400 text-sm">
+                          ⏸ 無効
+                        </div>
+                      )}
                       {worker.circuitOpen && (
                         <div className="text-red-400 text-sm">
                           ⚡ サーキット開放中
@@ -395,9 +467,9 @@ function App() {
                 ) : (
                   tasks.map((task) => (
                     <div
-                      key={task.id + task.timestamp}
+                      key={task.id}
                       className={`flex items-center justify-between p-3 rounded-lg ${
-                        task.success ? 'bg-slate-700' : 'bg-red-900/30'
+                        task.success ? "bg-slate-700" : "bg-red-900/30"
                       }`}
                     >
                       <div className="flex items-center gap-3">

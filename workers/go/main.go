@@ -183,7 +183,7 @@ func handleTask(w http.ResponseWriter, r *http.Request) {
 	currentLoad.WithLabelValues(workerName).Set(float64(current))
 
 	if int(current) > cfg.MaxConcurrentRequests {
-		atomic.AddInt32(&activeRequests, -1)
+		// Note: defer will handle decrement, no need for explicit decrement here
 		requestsTotal.WithLabelValues(workerName, "overloaded").Inc()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusServiceUnavailable)
@@ -311,7 +311,8 @@ func corsMiddleware(next http.Handler) http.Handler {
 }
 
 func main() {
-	rand.Seed(time.Now().UnixNano())
+	// Note: As of Go 1.20+, the global random is automatically seeded
+	// No need for explicit rand.Seed call
 
 	// Load configuration
 	config = loadConfig()

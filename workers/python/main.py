@@ -119,28 +119,12 @@ async def startup():
 async def handle_task(task: TaskRequest):
     global active_requests, queue_depth
 
-    # Try to acquire queue slot
-    if not queue_semaphore.locked():
-        acquired = queue_semaphore._value > 0
-    else:
-        acquired = False
-    
+    # Try to acquire queue slot with timeout (non-blocking)
     try:
-        # Non-blocking acquire attempt
-        acquired = queue_semaphore._value > 0
-        if not acquired:
-            requests_total.labels(worker=WORKER_NAME, status="rejected").inc()
-            raise HTTPException(
-                status_code=503,
-                detail={"error": "Queue full - service overloaded", "worker": WORKER_NAME},
-            )
-        
-        await queue_semaphore.acquire()
+        await asyncio.wait_for(queue_semaphore.acquire(), timeout=0.01)
         with queue_depth_lock:
             queue_depth += 1
-    except Exception as e:
-        if "Queue full" in str(e):
-            raise
+    except asyncio.TimeoutError:
         requests_total.labels(worker=WORKER_NAME, status="rejected").inc()
         raise HTTPException(
             status_code=503,
