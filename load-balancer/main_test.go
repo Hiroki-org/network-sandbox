@@ -595,7 +595,7 @@ func TestInvalidTaskRequest(t *testing.T) {
 
 	mux.ServeHTTP(w, req)
 
-    // See comments in thought process. Expecting 503 because downstream worker call fails (not set up).
+	// See comments in thought process. Expecting 503 because downstream worker call fails (not set up).
 	if w.Code != http.StatusServiceUnavailable {
 		t.Errorf("status code = %d, want %d", w.Code, http.StatusServiceUnavailable)
 	}

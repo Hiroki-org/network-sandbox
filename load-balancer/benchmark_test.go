@@ -14,9 +14,9 @@ func BenchmarkSelectWorker(b *testing.B) {
 	lb.workers[0].Healthy = false
 	lb.workers[1].Enabled = false
 	lb.workers[2].CircuitOpen = true
-    lb.workers[10].Healthy = false
-    lb.workers[11].Enabled = false
-    lb.workers[12].CircuitOpen = true
+	lb.workers[10].Healthy = false
+	lb.workers[11].Enabled = false
+	lb.workers[12].CircuitOpen = true
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

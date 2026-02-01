@@ -283,19 +283,10 @@ func (lb *LoadBalancer) checkWorker(w *Worker) {
 	client := &http.Client{Timeout: 2 * time.Second}
 	resp, err := client.Get(w.URL + "/health")
 
-	lb.mu.Lock()
-	defer lb.mu.Unlock()
-
 	if err != nil || resp.StatusCode != http.StatusOK {
-		w.ConsecFailures++
-		if w.ConsecFailures >= lb.circuitThreshold {
-			w.CircuitOpen = true
-			w.Healthy = false
-		}
+		lb.recordFailure(w)
 	} else {
-		w.ConsecFailures = 0
-		w.Healthy = true
-		w.CircuitOpen = false
+		lb.recordSuccess(w)
 	}
 	if resp != nil {
 		resp.Body.Close()
@@ -400,19 +391,14 @@ func handleTask(w http.ResponseWriter, r *http.Request) {
 	if err != nil || resp.StatusCode >= 500 {
 		lb.mu.Lock()
 		worker.FailedRequests++
-		worker.ConsecFailures++
-		if worker.ConsecFailures >= lb.circuitThreshold {
-			worker.CircuitOpen = true
-		}
 		lb.mu.Unlock()
+		lb.recordFailure(worker)
 		requestsTotal.WithLabelValues(worker.Name, "error").Inc()
 		http.Error(w, `{"error": "Worker failed"}`, http.StatusServiceUnavailable)
 		return
 	}
 
-	lb.mu.Lock()
-	worker.ConsecFailures = 0
-	lb.mu.Unlock()
+	lb.recordSuccess(worker)
 
 	requestsTotal.WithLabelValues(worker.Name, "success").Inc()
 
