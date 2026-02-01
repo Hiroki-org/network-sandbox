@@ -44,6 +44,8 @@ type LoadBalancer struct {
 	roundRobinIdx int
 	wsClients     map[*websocket.Conn]bool
 	wsClientsMu   sync.Mutex
+	activeChecks  map[*Worker]bool
+	checkMu       sync.Mutex
 }
 
 // Prometheus metrics
@@ -104,9 +106,10 @@ func init() {
 // NewLoadBalancer creates a new load balancer
 func NewLoadBalancer() *LoadBalancer {
 	return &LoadBalancer{
-		workers:   make([]*Worker, 0),
-		algorithm: "round-robin",
-		wsClients: make(map[*websocket.Conn]bool),
+		workers:      make([]*Worker, 0),
+		algorithm:    "round-robin",
+		wsClients:    make(map[*websocket.Conn]bool),
+		activeChecks: make(map[*Worker]bool),
 	}
 }
 
@@ -240,7 +243,22 @@ func (lb *LoadBalancer) checkAllWorkers() {
 	lb.mu.RUnlock()
 
 	for _, w := range workers {
-		go lb.checkWorker(w)
+		lb.checkMu.Lock()
+		if lb.activeChecks[w] {
+			lb.checkMu.Unlock()
+			continue
+		}
+		lb.activeChecks[w] = true
+		lb.checkMu.Unlock()
+
+		go func(worker *Worker) {
+			defer func() {
+				lb.checkMu.Lock()
+				delete(lb.activeChecks, worker)
+				lb.checkMu.Unlock()
+			}()
+			lb.checkWorker(worker)
+		}(w)
 	}
 }
 
