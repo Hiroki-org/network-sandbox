@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"sort"
 	"os/signal"
 	"strconv"
 	"strings"
@@ -28,7 +29,7 @@ type Worker struct {
 	Weight         int    `json:"weight"`
 	MaxLoad        int    `json:"maxLoad"`
 	Healthy        bool   `json:"healthy"`
-	CurrentLoad    int    `json:"currentLoad"`
+	CurrentLoad    int32  `json:"currentLoad"`
 	Enabled        bool   `json:"enabled"`
 	TotalRequests  int64  `json:"totalRequests"`
 	FailedRequests int64  `json:"failedRequests"`
@@ -38,12 +39,16 @@ type Worker struct {
 
 // LoadBalancer manages workers and distribution
 type LoadBalancer struct {
-	mu            sync.RWMutex
-	workers       []*Worker
-	algorithm     string
-	roundRobinIdx int
-	wsClients     map[*websocket.Conn]bool
-	wsClientsMu   sync.Mutex
+	mu                sync.RWMutex
+	workers           []*Worker
+	algorithm         string
+	roundRobinIdx     int
+	wsClients         map[*websocket.Conn]bool
+	wsClientsMu       sync.Mutex
+	activeWorkers     []*Worker
+	cumulativeWeights []int
+	totalWeight       int
+	CircuitThreshold  int
 }
 
 // Prometheus metrics
@@ -104,9 +109,12 @@ func init() {
 // NewLoadBalancer creates a new load balancer
 func NewLoadBalancer() *LoadBalancer {
 	return &LoadBalancer{
-		workers:   make([]*Worker, 0),
-		algorithm: "round-robin",
-		wsClients: make(map[*websocket.Conn]bool),
+		workers:           make([]*Worker, 0),
+		algorithm:         "round-robin",
+		wsClients:         make(map[*websocket.Conn]bool),
+		activeWorkers:     make([]*Worker, 0),
+		cumulativeWeights: make([]int, 0),
+		CircuitThreshold:  3,
 	}
 }
 
@@ -123,6 +131,23 @@ func (lb *LoadBalancer) AddWorker(name, url, color string, weight, maxLoad int) 
 		Healthy: true,
 		Enabled: true,
 	})
+	lb.refreshWorkers()
+}
+
+func (lb *LoadBalancer) refreshWorkers() {
+	active := make([]*Worker, 0, len(lb.workers))
+	weights := make([]int, 0, len(lb.workers))
+	total := 0
+	for _, w := range lb.workers {
+		if w.Healthy && w.Enabled && !w.CircuitOpen {
+			active = append(active, w)
+			total += w.Weight
+			weights = append(weights, total)
+		}
+	}
+	lb.activeWorkers = active
+	lb.cumulativeWeights = weights
+	lb.totalWeight = total
 }
 
 // SelectWorker selects a worker based on the current algorithm
@@ -130,25 +155,19 @@ func (lb *LoadBalancer) SelectWorker() *Worker {
 	lb.mu.Lock()
 	defer lb.mu.Unlock()
 
-	available := make([]*Worker, 0)
-	for _, w := range lb.workers {
-		if w.Healthy && w.Enabled && !w.CircuitOpen {
-			available = append(available, w)
-		}
-	}
-	if len(available) == 0 {
+	if len(lb.activeWorkers) == 0 {
 		return nil
 	}
 
 	switch lb.algorithm {
 	case "least-connections":
-		return lb.leastConnections(available)
+		return lb.leastConnections(lb.activeWorkers)
 	case "weighted":
-		return lb.weighted(available)
+		return lb.weighted(lb.activeWorkers)
 	case "random":
-		return available[rand.Intn(len(available))]
+		return lb.activeWorkers[rand.Intn(len(lb.activeWorkers))]
 	default:
-		return lb.roundRobin(available)
+		return lb.roundRobin(lb.activeWorkers)
 	}
 }
 
@@ -169,19 +188,18 @@ func (lb *LoadBalancer) leastConnections(workers []*Worker) *Worker {
 }
 
 func (lb *LoadBalancer) weighted(workers []*Worker) *Worker {
-	totalWeight := 0
-	for _, w := range workers {
-		totalWeight += w.Weight
-	}
-	if totalWeight == 0 {
-		return workers[0]
-	}
-	r := rand.Intn(totalWeight)
-	for _, w := range workers {
-		r -= w.Weight
-		if r < 0 {
-			return w
+	if lb.totalWeight == 0 {
+		if len(workers) > 0 {
+			return workers[0]
 		}
+		return nil
+	}
+	r := rand.Intn(lb.totalWeight)
+	idx := sort.Search(len(lb.cumulativeWeights), func(i int) bool {
+		return lb.cumulativeWeights[i] > r
+	})
+	if idx < len(workers) {
+		return workers[idx]
 	}
 	return workers[len(workers)-1]
 }
@@ -251,16 +269,26 @@ func (lb *LoadBalancer) checkWorker(w *Worker) {
 	lb.mu.Lock()
 	defer lb.mu.Unlock()
 
+	changed := false
 	if err != nil || resp.StatusCode != http.StatusOK {
 		w.ConsecFailures++
-		if w.ConsecFailures >= 3 {
-			w.CircuitOpen = true
-			w.Healthy = false
+		if w.ConsecFailures >= lb.CircuitThreshold {
+			if !w.CircuitOpen || w.Healthy {
+				w.CircuitOpen = true
+				w.Healthy = false
+				changed = true
+			}
 		}
 	} else {
 		w.ConsecFailures = 0
-		w.Healthy = true
-		w.CircuitOpen = false
+		if !w.Healthy || w.CircuitOpen {
+			w.Healthy = true
+			w.CircuitOpen = false
+			changed = true
+		}
+	}
+	if changed {
+		lb.refreshWorkers()
 	}
 	if resp != nil {
 		resp.Body.Close()
@@ -280,11 +308,17 @@ func (lb *LoadBalancer) UpdateWorker(name string, enabled *bool, weight *int) bo
 	defer lb.mu.Unlock()
 	for _, w := range lb.workers {
 		if w.Name == name {
-			if enabled != nil {
+			changed := false
+			if enabled != nil && w.Enabled != *enabled {
 				w.Enabled = *enabled
+				changed = true
 			}
-			if weight != nil && *weight > 0 {
+			if weight != nil && *weight > 0 && w.Weight != *weight {
 				w.Weight = *weight
+				changed = true
+			}
+			if changed {
+				lb.refreshWorkers()
 			}
 			return true
 		}
@@ -366,8 +400,11 @@ func handleTask(w http.ResponseWriter, r *http.Request) {
 		lb.mu.Lock()
 		worker.FailedRequests++
 		worker.ConsecFailures++
-		if worker.ConsecFailures >= 3 {
-			worker.CircuitOpen = true
+		if worker.ConsecFailures >= lb.CircuitThreshold {
+			if !worker.CircuitOpen {
+				worker.CircuitOpen = true
+				lb.refreshWorkers()
+			}
 		}
 		lb.mu.Unlock()
 		requestsTotal.WithLabelValues(worker.Name, "error").Inc()
