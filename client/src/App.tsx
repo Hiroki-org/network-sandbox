@@ -72,6 +72,8 @@ function App() {
 
   // WebSocket connection
   useEffect(() => {
+    let reconnectTimeoutId: NodeJS.Timeout | null = null;
+
     const connect = () => {
       const ws = new WebSocket(WS_URL);
       wsRef.current = ws;
@@ -93,7 +95,7 @@ function App() {
       ws.onclose = () => {
         setConnected(false);
         console.log("WebSocket disconnected, reconnecting...");
-        setTimeout(connect, 3000);
+        reconnectTimeoutId = setTimeout(connect, 3000);
       };
 
       ws.onerror = (error) => {
@@ -104,6 +106,9 @@ function App() {
     connect();
 
     return () => {
+      if (reconnectTimeoutId) {
+        clearTimeout(reconnectTimeoutId);
+      }
       if (wsRef.current) {
         wsRef.current.close();
       }
@@ -318,8 +323,8 @@ function App() {
                 <button
                   onClick={() => setIsRunning(!isRunning)}
                   className={`w-full py-3 px-4 rounded-lg font-semibold transition ${isRunning
-                      ? "bg-red-600 hover:bg-red-700"
-                      : "bg-blue-600 hover:bg-blue-700"
+                    ? "bg-red-600 hover:bg-red-700"
+                    : "bg-blue-600 hover:bg-blue-700"
                     }`}
                 >
                   {isRunning ? "停止" : "開始"}
@@ -343,8 +348,8 @@ function App() {
                     key={algo.id}
                     onClick={() => changeAlgorithm(algo.id)}
                     className={`w-full text-left px-4 py-3 rounded-lg transition ${status?.algorithm === algo.id
-                        ? "bg-blue-600"
-                        : "bg-slate-700 hover:bg-slate-600"
+                      ? "bg-blue-600"
+                      : "bg-slate-700 hover:bg-slate-600"
                       }`}
                   >
                     <div className="font-medium">{algo.name}</div>

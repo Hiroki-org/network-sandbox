@@ -358,34 +358,8 @@ async fn handle_health(State(state): State<Arc<AppState>>) -> impl IntoResponse 
 }
 
 /// 設定（Configuration）の現在値をJSONで返すエンドポイントハンドラ。
-
 ///
-
-/// レスポンスとして現在の`Configuration`クローンをJSON形式で返します。
-
-///
-
-/// # Examples
-
-///
-
-/// ```no_run
-
-/// use std::sync::Arc;
-
-/// use axum::extract::State;
-
-/// // `AppState` と `Configuration` は本クレートで定義されている型とする
-
-///
-
-/// // 既存のアプリケーション状態を持つ `state` を用意して
-
-/// // let state: Arc<AppState> = ...;
-
-/// // let response = handle_config_get(State(state)).await;
-
-/// ```
+/// レスポンスとして現在の `Configuration` クローンをJSON形式で返します。
 async fn handle_config_get(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let config = state.config.read().clone();
     Json(config)
