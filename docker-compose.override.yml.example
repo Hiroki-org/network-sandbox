@@ -1,0 +1,98 @@
+# Docker Compose Override Example
+# ================================
+# Copy this file to docker-compose.override.yml to customize
+# Your overrides will be automatically merged with docker-compose.yml
+#
+# Usage:
+#   cp docker-compose.override.yml.example docker-compose.override.yml
+#   # Edit docker-compose.override.yml
+#   docker-compose up -d
+#
+
+version: "3.8"
+
+services:
+  # ============================================
+  # Example: Replace Load Balancer with Custom Implementation
+  # ============================================
+  # load-balancer:
+  #   # Option 1: Use a custom image
+  #   image: your-registry/my-custom-load-balancer:latest
+  #
+  #   # Option 2: Build from a different directory
+  #   build:
+  #     context: ./my-custom-load-balancer
+  #     dockerfile: Dockerfile
+  #
+  #   # Override environment variables
+  #   environment:
+  #     - MY_CUSTOM_CONFIG=value
+
+  # ============================================
+  # Example: Replace Go Worker with Custom Implementation
+  # ============================================
+  # worker-go-1:
+  #   image: your-registry/my-custom-worker:latest
+  #   environment:
+  #     - SOME_CUSTOM_ENV=value
+
+  # ============================================
+  # Example: Add a New Custom Worker Type
+  # ============================================
+  # worker-custom-1:
+  #   build:
+  #     context: ./workers/custom
+  #     dockerfile: Dockerfile
+  #   ports:
+  #     - "8090:8090"
+  #   environment:
+  #     - PORT=8090
+  #     - WORKER_NAME=custom-1
+  #     - WORKER_COLOR=#FF00FF
+  #     - MAX_CONCURRENT=10
+  #   networks:
+  #     - sandbox-network
+  #   labels:
+  #     - "prometheus.io/scrape=true"
+  #     - "prometheus.io/port=8090"
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 3
+
+  # ============================================
+  # Example: Disable Specific Workers
+  # ============================================
+  # To disable a worker, set scale to 0 or add profiles:
+  #
+  # worker-python-1:
+  #   profiles:
+  #     - full  # Only starts when: docker-compose --profile full up
+  #
+  # worker-python-2:
+  #   profiles:
+  #     - full
+
+  # ============================================
+  # Example: Replace Monitoring Stack
+  # ============================================
+  # prometheus:
+  #   image: your-custom-prometheus:latest
+  #   volumes:
+  #     - ./my-prometheus-config:/etc/prometheus
+
+  # grafana:
+  #   image: your-custom-grafana:latest
+  #   environment:
+  #     - GF_SECURITY_ADMIN_PASSWORD=my-secure-password
+
+  # ============================================
+  # Example: Add Custom Metrics Collector
+  # ============================================
+  # custom-exporter:
+  #   image: your-custom-exporter:latest
+  #   ports:
+  #     - "9101:9101"
+  #   networks:
+  #     - sandbox-network

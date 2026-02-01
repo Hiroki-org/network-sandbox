@@ -1,0 +1,180 @@
+services:
+  # Load Balancer
+  load-balancer:
+    build: ./load-balancer
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+      - LB_ALGORITHM=round-robin
+      - WORKER_GO_1_URL=http://worker-go-1:8080
+      - WORKER_GO_2_URL=http://worker-go-2:8080
+      - WORKER_RUST_1_URL=http://worker-rust-1:8080
+      - WORKER_RUST_2_URL=http://worker-rust-2:8080
+      - WORKER_PYTHON_1_URL=http://worker-python-1:8080
+      - WORKER_PYTHON_2_URL=http://worker-python-2:8080
+    depends_on:
+      - worker-go-1
+      - worker-go-2
+      - worker-rust-1
+      - worker-rust-2
+      - worker-python-1
+      - worker-python-2
+    networks:
+      - sandbox-network
+    restart: unless-stopped
+
+  # Go Workers
+  worker-go-1:
+    build: ./workers/go
+    environment:
+      - PORT=8080
+      - WORKER_NAME=go-worker-1
+      - WORKER_COLOR=#3B82F6
+      - MAX_CONCURRENT_REQUESTS=15
+      - RESPONSE_DELAY_MS=50
+      - FAILURE_RATE=0.02
+      - QUEUE_SIZE=80
+      - INITIAL_WEIGHT=5
+    networks:
+      - sandbox-network
+    restart: unless-stopped
+
+  worker-go-2:
+    build: ./workers/go
+    environment:
+      - PORT=8080
+      - WORKER_NAME=go-worker-2
+      - WORKER_COLOR=#6366F1
+      - MAX_CONCURRENT_REQUESTS=8
+      - RESPONSE_DELAY_MS=120
+      - FAILURE_RATE=0.08
+      - QUEUE_SIZE=40
+      - INITIAL_WEIGHT=2
+    networks:
+      - sandbox-network
+    restart: unless-stopped
+
+  # Rust Workers
+  worker-rust-1:
+    build: ./workers/rust
+    environment:
+      - PORT=8080
+      - WORKER_NAME=rust-worker-1
+      - WORKER_COLOR=#F97316
+      - MAX_CONCURRENT_REQUESTS=20
+      - RESPONSE_DELAY_MS=40
+      - FAILURE_RATE=0.01
+      - QUEUE_SIZE=100
+      - INITIAL_WEIGHT=6
+    networks:
+      - sandbox-network
+    restart: unless-stopped
+
+  worker-rust-2:
+    build: ./workers/rust
+    environment:
+      - PORT=8080
+      - WORKER_NAME=rust-worker-2
+      - WORKER_COLOR=#EAB308
+      - MAX_CONCURRENT_REQUESTS=5
+      - RESPONSE_DELAY_MS=200
+      - FAILURE_RATE=0.15
+      - QUEUE_SIZE=25
+      - INITIAL_WEIGHT=1
+    networks:
+      - sandbox-network
+    restart: unless-stopped
+
+  # Python Workers
+  worker-python-1:
+    build: ./workers/python
+    environment:
+      - PORT=8080
+      - WORKER_NAME=python-worker-1
+      - WORKER_COLOR=#10B981
+      - MAX_CONCURRENT_REQUESTS=6
+      - RESPONSE_DELAY_MS=250
+      - FAILURE_RATE=0.20
+      - QUEUE_SIZE=30
+      - INITIAL_WEIGHT=1
+    networks:
+      - sandbox-network
+    restart: unless-stopped
+
+  worker-python-2:
+    build: ./workers/python
+    environment:
+      - PORT=8080
+      - WORKER_NAME=python-worker-2
+      - WORKER_COLOR=#14B8A6
+      - MAX_CONCURRENT_REQUESTS=10
+      - RESPONSE_DELAY_MS=80
+      - FAILURE_RATE=0.05
+      - QUEUE_SIZE=60
+      - INITIAL_WEIGHT=3
+    networks:
+      - sandbox-network
+    restart: unless-stopped
+
+  # React Client
+  client:
+    build: ./client
+    ports:
+      - "3000:80"
+    depends_on:
+      - load-balancer
+    networks:
+      - sandbox-network
+    restart: unless-stopped
+
+  # Redis (Optional - for distributed state)
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - sandbox-network
+    restart: unless-stopped
+
+  # Prometheus
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-lifecycle"
+    networks:
+      - sandbox-network
+    restart: unless-stopped
+
+  # Grafana
+  grafana:
+    image: grafana/grafana:10.2.2
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GF_SECURITY_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GF_SECURITY_ADMIN_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=${GF_USERS_ALLOW_SIGN_UP:-false}
+    depends_on:
+      - prometheus
+    networks:
+      - sandbox-network
+    restart: unless-stopped
+
+networks:
+  sandbox-network:
+    driver: bridge
+
+volumes:
+  prometheus-data:
+  grafana-data:

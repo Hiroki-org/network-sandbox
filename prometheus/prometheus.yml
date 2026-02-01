@@ -1,0 +1,24 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: "load-balancer"
+    static_configs:
+      - targets: ["load-balancer:8000"]
+    metrics_path: /metrics
+
+  - job_name: "workers"
+    static_configs:
+      - targets:
+          - "worker-go-1:8080"
+          - "worker-go-2:8080"
+          - "worker-rust-1:8080"
+          - "worker-rust-2:8080"
+          - "worker-python-1:8080"
+          - "worker-python-2:8080"
+    metrics_path: /metrics
