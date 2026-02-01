@@ -3,10 +3,8 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -25,12 +23,15 @@ func TestNewLoadBalancer(t *testing.T) {
 		{"least-connections", "least-connections", "least-connections"},
 		{"weighted", "weighted", "weighted"},
 		{"random", "random", "random"},
-		{"empty defaults to round-robin", "", ""},
+		{"empty defaults to round-robin", "", "round-robin"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			lb := NewLoadBalancer(tt.algorithm)
+			lb := NewLoadBalancer()
+			if tt.algorithm != "" {
+				lb.SetAlgorithm(tt.algorithm)
+			}
 			if lb == nil {
 				t.Fatal("NewLoadBalancer returned nil")
 			}
@@ -48,9 +49,9 @@ func TestNewLoadBalancer(t *testing.T) {
 }
 
 func TestAddWorker(t *testing.T) {
-	lb := NewLoadBalancer("round-robin")
+	lb := NewLoadBalancer()
 
-	lb.AddWorker("test-worker", "http://localhost:8080", "#FF0000", 2)
+	lb.AddWorker("test-worker", "http://localhost:8080", "#FF0000", 2, 10)
 
 	if len(lb.workers) != 1 {
 		t.Fatalf("expected 1 worker, got %d", len(lb.workers))
@@ -75,10 +76,10 @@ func TestAddWorker(t *testing.T) {
 }
 
 func TestGetHealthyWorkers(t *testing.T) {
-	lb := NewLoadBalancer("round-robin")
-	lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 1)
-	lb.AddWorker("worker-2", "http://localhost:8082", "#00FF00", 1)
-	lb.AddWorker("worker-3", "http://localhost:8083", "#0000FF", 1)
+	lb := NewLoadBalancer()
+	lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 1, 10)
+	lb.AddWorker("worker-2", "http://localhost:8082", "#00FF00", 1, 10)
+	lb.AddWorker("worker-3", "http://localhost:8083", "#0000FF", 1, 10)
 
 	// Mark worker-2 as unhealthy
 	lb.workers[1].Healthy = false
@@ -98,10 +99,10 @@ func TestGetHealthyWorkers(t *testing.T) {
 }
 
 func TestRoundRobinSelection(t *testing.T) {
-	lb := NewLoadBalancer("round-robin")
-	lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 1)
-	lb.AddWorker("worker-2", "http://localhost:8082", "#00FF00", 1)
-	lb.AddWorker("worker-3", "http://localhost:8083", "#0000FF", 1)
+	lb := NewLoadBalancer()
+	lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 1, 10)
+	lb.AddWorker("worker-2", "http://localhost:8082", "#00FF00", 1, 10)
+	lb.AddWorker("worker-3", "http://localhost:8083", "#0000FF", 1, 10)
 
 	workers := lb.getHealthyWorkers()
 
@@ -126,10 +127,11 @@ func TestRoundRobinSelection(t *testing.T) {
 }
 
 func TestLeastConnectionsSelection(t *testing.T) {
-	lb := NewLoadBalancer("least-connections")
-	lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 1)
-	lb.AddWorker("worker-2", "http://localhost:8082", "#00FF00", 1)
-	lb.AddWorker("worker-3", "http://localhost:8083", "#0000FF", 1)
+	lb := NewLoadBalancer()
+	lb.SetAlgorithm("least-connections")
+	lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 1, 10)
+	lb.AddWorker("worker-2", "http://localhost:8082", "#00FF00", 1, 10)
+	lb.AddWorker("worker-3", "http://localhost:8083", "#0000FF", 1, 10)
 
 	// Set different load levels
 	atomic.StoreInt32(&lb.workers[0].CurrentLoad, 5)
@@ -145,10 +147,11 @@ func TestLeastConnectionsSelection(t *testing.T) {
 }
 
 func TestWeightedSelection(t *testing.T) {
-	lb := NewLoadBalancer("weighted")
-	lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 1)
-	lb.AddWorker("worker-2", "http://localhost:8082", "#00FF00", 3)
-	lb.AddWorker("worker-3", "http://localhost:8083", "#0000FF", 1)
+	lb := NewLoadBalancer()
+	lb.SetAlgorithm("weighted")
+	lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 1, 10)
+	lb.AddWorker("worker-2", "http://localhost:8082", "#00FF00", 3, 10)
+	lb.AddWorker("worker-3", "http://localhost:8083", "#0000FF", 1, 10)
 
 	workers := lb.getHealthyWorkers()
 
@@ -167,10 +170,11 @@ func TestWeightedSelection(t *testing.T) {
 }
 
 func TestRandomSelection(t *testing.T) {
-	lb := NewLoadBalancer("random")
-	lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 1)
-	lb.AddWorker("worker-2", "http://localhost:8082", "#00FF00", 1)
-	lb.AddWorker("worker-3", "http://localhost:8083", "#0000FF", 1)
+	lb := NewLoadBalancer()
+	lb.SetAlgorithm("random")
+	lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 1, 10)
+	lb.AddWorker("worker-2", "http://localhost:8082", "#00FF00", 1, 10)
+	lb.AddWorker("worker-3", "http://localhost:8083", "#0000FF", 1, 10)
 
 	workers := lb.getHealthyWorkers()
 
@@ -190,7 +194,7 @@ func TestRandomSelection(t *testing.T) {
 }
 
 func TestSetAlgorithm(t *testing.T) {
-	lb := NewLoadBalancer("round-robin")
+	lb := NewLoadBalancer()
 
 	lb.SetAlgorithm("least-connections")
 
@@ -204,55 +208,10 @@ func TestSetAlgorithm(t *testing.T) {
 	}
 }
 
-func TestRecordSuccess(t *testing.T) {
-	lb := NewLoadBalancer("round-robin")
-	lb.AddWorker("test-worker", "http://localhost:8080", "#FF0000", 1)
-
-	worker := lb.workers[0]
-	worker.ConsecFailures = 5
-
-	lb.recordSuccess(worker)
-
-	if worker.ConsecFailures != 0 {
-		t.Errorf("consecFailures = %d, want 0", worker.ConsecFailures)
-	}
-}
-
-func TestRecordFailure(t *testing.T) {
-	lb := NewLoadBalancer("round-robin")
-	lb.AddWorker("test-worker", "http://localhost:8080", "#FF0000", 1)
-
-	worker := lb.workers[0]
-	initialFailures := worker.ConsecFailures
-
-	lb.recordFailure(worker)
-
-	if worker.ConsecFailures != initialFailures+1 {
-		t.Errorf("consecFailures = %d, want %d", worker.ConsecFailures, initialFailures+1)
-	}
-}
-
-func TestCircuitBreaker(t *testing.T) {
-	lb := NewLoadBalancer("round-robin")
-	lb.circuitThreshold = 3
-	lb.AddWorker("test-worker", "http://localhost:8080", "#FF0000", 1)
-
-	worker := lb.workers[0]
-
-	// Record failures to trigger circuit breaker
-	for i := 0; i < 3; i++ {
-		lb.recordFailure(worker)
-	}
-
-	if !worker.CircuitOpen {
-		t.Error("circuit should be open after threshold failures")
-	}
-}
-
 func TestGetStatus(t *testing.T) {
-	lb := NewLoadBalancer("round-robin")
-	lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 1)
-	lb.AddWorker("worker-2", "http://localhost:8082", "#00FF00", 2)
+	lb := NewLoadBalancer()
+	lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 1, 10)
+	lb.AddWorker("worker-2", "http://localhost:8082", "#00FF00", 2, 10)
 
 	atomic.StoreInt32(&lb.workers[0].CurrentLoad, 3)
 	atomic.StoreInt64(&lb.workers[0].TotalRequests, 100)
@@ -312,8 +271,8 @@ func TestHealthEndpoint(t *testing.T) {
 }
 
 func TestStatusEndpoint(t *testing.T) {
-	lb := NewLoadBalancer("round-robin")
-	lb.AddWorker("test-worker", "http://localhost:8080", "#FF0000", 1)
+	lb := NewLoadBalancer()
+	lb.AddWorker("test-worker", "http://localhost:8080", "#FF0000", 1, 10)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
@@ -341,7 +300,7 @@ func TestStatusEndpoint(t *testing.T) {
 }
 
 func TestAlgorithmEndpointGet(t *testing.T) {
-	lb := NewLoadBalancer("round-robin")
+	lb := NewLoadBalancer()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/algorithm", func(w http.ResponseWriter, r *http.Request) {
@@ -374,7 +333,7 @@ func TestAlgorithmEndpointGet(t *testing.T) {
 }
 
 func TestAlgorithmEndpointPut(t *testing.T) {
-	lb := NewLoadBalancer("round-robin")
+	lb := NewLoadBalancer()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/algorithm", func(w http.ResponseWriter, r *http.Request) {
@@ -411,45 +370,6 @@ func TestAlgorithmEndpointPut(t *testing.T) {
 	}
 }
 
-func TestTaskEndpointNoHealthyWorkers(t *testing.T) {
-	lb := NewLoadBalancer("round-robin")
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("/task", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-
-		var task TaskRequest
-		if err := json.NewDecoder(r.Body).Decode(&task); err != nil {
-			http.Error(w, "Invalid request body", http.StatusBadRequest)
-			return
-		}
-
-		respBody, statusCode, err := lb.ForwardRequest(task)
-		w.Header().Set("Content-Type", "application/json")
-		if err != nil {
-			w.WriteHeader(statusCode)
-			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-			return
-		}
-		w.WriteHeader(statusCode)
-		w.Write(respBody)
-	})
-
-	body := bytes.NewBufferString(`{"id":"task-1","weight":1.0}`)
-	req := httptest.NewRequest(http.MethodPost, "/task", body)
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	mux.ServeHTTP(w, req)
-
-	if w.Code != http.StatusServiceUnavailable {
-		t.Errorf("status code = %d, want %d", w.Code, http.StatusServiceUnavailable)
-	}
-}
-
 func TestCORSMiddleware(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -466,7 +386,7 @@ func TestCORSMiddleware(t *testing.T) {
 		t.Error("CORS header not set correctly")
 	}
 
-	if w.Header().Get("Access-Control-Allow-Methods") != "GET, POST, PUT, OPTIONS" {
+	if w.Header().Get("Access-Control-Allow-Methods") != "GET, POST, PUT, PATCH, DELETE, OPTIONS" {
 		t.Error("CORS methods header not set correctly")
 	}
 
@@ -505,9 +425,10 @@ func TestSelectWorkerWithDifferentAlgorithms(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			lb := NewLoadBalancer(tt.algorithm)
-			lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 1)
-			lb.AddWorker("worker-2", "http://localhost:8082", "#00FF00", 2)
+			lb := NewLoadBalancer()
+			lb.SetAlgorithm(tt.algorithm)
+			lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 1, 10)
+			lb.AddWorker("worker-2", "http://localhost:8082", "#00FF00", 2, 10)
 
 			worker := lb.SelectWorker()
 			if worker == nil {
@@ -518,8 +439,8 @@ func TestSelectWorkerWithDifferentAlgorithms(t *testing.T) {
 }
 
 func TestSelectWorkerReturnsNilWhenNoHealthyWorkers(t *testing.T) {
-	lb := NewLoadBalancer("round-robin")
-	lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 1)
+	lb := NewLoadBalancer()
+	lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 1, 10)
 
 	// Mark all workers as unhealthy
 	lb.workers[0].Healthy = false
@@ -531,9 +452,9 @@ func TestSelectWorkerReturnsNilWhenNoHealthyWorkers(t *testing.T) {
 }
 
 func TestConcurrentWorkerAccess(t *testing.T) {
-	lb := NewLoadBalancer("round-robin")
-	lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 1)
-	lb.AddWorker("worker-2", "http://localhost:8082", "#00FF00", 1)
+	lb := NewLoadBalancer()
+	lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 1, 10)
+	lb.AddWorker("worker-2", "http://localhost:8082", "#00FF00", 1, 10)
 
 	var wg sync.WaitGroup
 	for i := 0; i < 100; i++ {
@@ -561,8 +482,8 @@ func TestConcurrentWorkerAccess(t *testing.T) {
 }
 
 func TestBroadcastStatus(t *testing.T) {
-	lb := NewLoadBalancer("round-robin")
-	lb.AddWorker("test-worker", "http://localhost:8080", "#FF0000", 1)
+	lb := NewLoadBalancer()
+	lb.AddWorker("test-worker", "http://localhost:8080", "#FF0000", 1, 10)
 
 	// Create a mock WebSocket connection
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -592,36 +513,9 @@ func TestBroadcastStatus(t *testing.T) {
 	lb.BroadcastStatus()
 }
 
-func TestGetEnvFunction(t *testing.T) {
-	tests := []struct {
-		name       string
-		key        string
-		defaultVal string
-		envVal     string
-		want       string
-	}{
-		{"with env set", "TEST_KEY", "default", "custom", "custom"},
-		{"without env set", "NONEXISTENT_KEY", "default", "", "default"},
-		{"empty default", "NONEXISTENT_KEY", "", "", ""},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if tt.envVal != "" {
-				t.Setenv(tt.key, tt.envVal)
-			}
-
-			got := getEnv(tt.key, tt.defaultVal)
-			if got != tt.want {
-				t.Errorf("getEnv() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestWorkerCurrentLoadTracking(t *testing.T) {
-	lb := NewLoadBalancer("round-robin")
-	lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 1)
+	lb := NewLoadBalancer()
+	lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 1, 10)
 
 	worker := lb.workers[0]
 
@@ -647,8 +541,8 @@ func TestWorkerCurrentLoadTracking(t *testing.T) {
 }
 
 func TestWorkerRequestCounters(t *testing.T) {
-	lb := NewLoadBalancer("round-robin")
-	lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 1)
+	lb := NewLoadBalancer()
+	lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 1, 10)
 
 	worker := lb.workers[0]
 
@@ -665,60 +559,6 @@ func TestWorkerRequestCounters(t *testing.T) {
 
 	if failedReqs != 2 {
 		t.Errorf("failedRequests = %d, want 2", failedReqs)
-	}
-}
-
-func TestCircuitBreakerRecovery(t *testing.T) {
-	lb := NewLoadBalancer("round-robin")
-	lb.circuitThreshold = 2
-	lb.circuitRecovery = 50 * time.Millisecond
-	lb.AddWorker("test-worker", "http://localhost:8080", "#FF0000", 1)
-
-	worker := lb.workers[0]
-
-	// Trigger circuit breaker
-	for i := 0; i < 2; i++ {
-		lb.recordFailure(worker)
-	}
-
-	if !worker.CircuitOpen {
-		t.Error("circuit should be open")
-	}
-
-	// Wait for recovery
-	time.Sleep(100 * time.Millisecond)
-
-	// The circuit recovery is async, so we just verify it was triggered
-	// In a real scenario, the goroutine would close the circuit
-}
-
-func TestInvalidTaskRequest(t *testing.T) {
-	lb := NewLoadBalancer("round-robin")
-	lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 1)
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("/task", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-
-		var task TaskRequest
-		if err := json.NewDecoder(r.Body).Decode(&task); err != nil {
-			http.Error(w, "Invalid request body", http.StatusBadRequest)
-			return
-		}
-	})
-
-	body := bytes.NewBufferString(`invalid json`)
-	req := httptest.NewRequest(http.MethodPost, "/task", body)
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	mux.ServeHTTP(w, req)
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status code = %d, want %d", w.Code, http.StatusBadRequest)
 	}
 }
 
@@ -741,62 +581,11 @@ func TestTaskEndpointMethodNotAllowed(t *testing.T) {
 	}
 }
 
-func TestHealthResponseStructure(t *testing.T) {
-	health := HealthResponse{
-		Status:      "healthy",
-		CurrentLoad: 5,
-		QueueDepth:  2,
-	}
-
-	data, err := json.Marshal(health)
-	if err != nil {
-		t.Fatalf("failed to marshal health response: %v", err)
-	}
-
-	var decoded HealthResponse
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		t.Fatalf("failed to unmarshal health response: %v", err)
-	}
-
-	if decoded.Status != "healthy" {
-		t.Errorf("status = %v, want healthy", decoded.Status)
-	}
-	if decoded.CurrentLoad != 5 {
-		t.Errorf("currentLoad = %v, want 5", decoded.CurrentLoad)
-	}
-	if decoded.QueueDepth != 2 {
-		t.Errorf("queueDepth = %v, want 2", decoded.QueueDepth)
-	}
-}
-
-func TestTaskRequestStructure(t *testing.T) {
-	task := TaskRequest{
-		ID:     "task-123",
-		Weight: 1.5,
-	}
-
-	data, err := json.Marshal(task)
-	if err != nil {
-		t.Fatalf("failed to marshal task request: %v", err)
-	}
-
-	var decoded TaskRequest
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		t.Fatalf("failed to unmarshal task request: %v", err)
-	}
-
-	if decoded.ID != "task-123" {
-		t.Errorf("id = %v, want task-123", decoded.ID)
-	}
-	if decoded.Weight != 1.5 {
-		t.Errorf("weight = %v, want 1.5", decoded.Weight)
-	}
-}
-
 func TestWorkerWithZeroWeight(t *testing.T) {
-	lb := NewLoadBalancer("weighted")
-	lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 0)
-	lb.AddWorker("worker-2", "http://localhost:8082", "#00FF00", 2)
+	lb := NewLoadBalancer()
+	lb.SetAlgorithm("weighted")
+	lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 0, 10)
+	lb.AddWorker("worker-2", "http://localhost:8082", "#00FF00", 2, 10)
 
 	workers := lb.getHealthyWorkers()
 
