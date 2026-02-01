@@ -447,9 +447,9 @@ func TestSelectWorkerWithDifferentAlgorithms(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			lb := NewLoadBalancer()
-            if tt.algorithm != "" {
-			    lb.SetAlgorithm(tt.algorithm)
-            }
+			if tt.algorithm != "" {
+				lb.SetAlgorithm(tt.algorithm)
+			}
 			lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 1, 10)
 			lb.AddWorker("worker-2", "http://localhost:8082", "#00FF00", 2, 10)
 
@@ -486,10 +486,6 @@ func TestConcurrentWorkerAccess(t *testing.T) {
 			defer wg.Done()
 			worker := lb.SelectWorker()
 			if worker != nil {
-                // In main.go CurrentLoad is int, so we need to lock to update safely if not atomic.
-                // Or if it's atomic in usage... main.go uses lock.
-                // But test used atomic.AddInt32.
-                // I will use lock since field is int.
 				lb.mu.Lock()
 				worker.CurrentLoad++
 				lb.mu.Unlock()
@@ -554,10 +550,7 @@ func TestWorkerCurrentLoadTracking(t *testing.T) {
 
 	// Simulate increasing load
 	for i := 0; i < 5; i++ {
-        // Use lock as in main.go
-        lb.mu.Lock()
 		worker.CurrentLoad++
-        lb.mu.Unlock()
 	}
 
 	load := worker.CurrentLoad
@@ -567,9 +560,7 @@ func TestWorkerCurrentLoadTracking(t *testing.T) {
 
 	// Simulate decreasing load
 	for i := 0; i < 3; i++ {
-        lb.mu.Lock()
 		worker.CurrentLoad--
-        lb.mu.Unlock()
 	}
 
 	load = worker.CurrentLoad
@@ -627,7 +618,7 @@ func TestTaskEndpointMethodNotAllowed(t *testing.T) {
 
 func TestWorkerWithZeroWeight(t *testing.T) {
 	lb := NewLoadBalancer()
-    lb.SetAlgorithm("weighted")
+	lb.SetAlgorithm("weighted")
 	lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 0, 10)
 	lb.AddWorker("worker-2", "http://localhost:8082", "#00FF00", 2, 10)
 
