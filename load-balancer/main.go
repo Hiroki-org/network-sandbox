@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -19,17 +20,18 @@ import (
 
 // Worker represents a backend worker
 type Worker struct {
-	Name           string  `json:"name"`
-	URL            string  `json:"url"`
-	Color          string  `json:"color"`
-	Weight         int     `json:"weight"`
-	Healthy        bool    `json:"healthy"`
-	CurrentLoad    int     `json:"currentLoad"`
-	Enabled        bool    `json:"enabled"`
-	TotalRequests  int64   `json:"totalRequests"`
-	FailedRequests int64   `json:"failedRequests"`
-	CircuitOpen    bool    `json:"circuitOpen"`
-	ConsecFailures int     `json:"consecFailures"`
+	Name           string `json:"name"`
+	URL            string `json:"url"`
+	Color          string `json:"color"`
+	Weight         int    `json:"weight"`
+	MaxLoad        int    `json:"maxLoad"`
+	Healthy        bool   `json:"healthy"`
+	CurrentLoad    int    `json:"currentLoad"`
+	Enabled        bool   `json:"enabled"`
+	TotalRequests  int64  `json:"totalRequests"`
+	FailedRequests int64  `json:"failedRequests"`
+	CircuitOpen    bool   `json:"circuitOpen"`
+	ConsecFailures int    `json:"consecFailures"`
 }
 
 // LoadBalancer manages workers and distribution
@@ -93,7 +95,7 @@ func NewLoadBalancer() *LoadBalancer {
 }
 
 // AddWorker adds a worker to the pool
-func (lb *LoadBalancer) AddWorker(name, url, color string, weight int) {
+func (lb *LoadBalancer) AddWorker(name, url, color string, weight, maxLoad int) {
 	lb.mu.Lock()
 	defer lb.mu.Unlock()
 	lb.workers = append(lb.workers, &Worker{
@@ -101,6 +103,7 @@ func (lb *LoadBalancer) AddWorker(name, url, color string, weight int) {
 		URL:     url,
 		Color:   color,
 		Weight:  weight,
+		MaxLoad: maxLoad,
 		Healthy: true,
 		Enabled: true,
 	})
@@ -185,6 +188,7 @@ func (lb *LoadBalancer) GetStatus() map[string]interface{} {
 			"url":            w.URL,
 			"color":          w.Color,
 			"weight":         w.Weight,
+			"maxLoad":        w.MaxLoad,
 			"healthy":        w.Healthy,
 			"currentLoad":    w.CurrentLoad,
 			"enabled":        w.Enabled,
@@ -500,22 +504,32 @@ func main() {
 	}
 
 	workerConfigs := []struct {
-		envVar string
-		name   string
-		color  string
+		envVar  string
+		name    string
+		color   string
+		weight  int
+		maxLoad int
 	}{
-		{"WORKER_GO_1_URL", "go-worker-1", "#3B82F6"},
-		{"WORKER_GO_2_URL", "go-worker-2", "#6366F1"},
-		{"WORKER_RUST_1_URL", "rust-worker-1", "#F97316"},
-		{"WORKER_RUST_2_URL", "rust-worker-2", "#EAB308"},
-		{"WORKER_PYTHON_1_URL", "python-worker-1", "#10B981"},
-		{"WORKER_PYTHON_2_URL", "python-worker-2", "#14B8A6"},
+		{"WORKER_GO_1_URL", "go-worker-1", "#3B82F6", 5, 15},
+		{"WORKER_GO_2_URL", "go-worker-2", "#6366F1", 2, 8},
+		{"WORKER_RUST_1_URL", "rust-worker-1", "#F97316", 6, 20},
+		{"WORKER_RUST_2_URL", "rust-worker-2", "#EAB308", 1, 5},
+		{"WORKER_PYTHON_1_URL", "python-worker-1", "#10B981", 1, 6},
+		{"WORKER_PYTHON_2_URL", "python-worker-2", "#14B8A6", 3, 10},
 	}
 
 	for _, cfg := range workerConfigs {
 		if url := os.Getenv(cfg.envVar); url != "" {
-			lb.AddWorker(cfg.name, url, cfg.color, 1)
-			log.Printf("Added worker: %s -> %s", cfg.name, url)
+			// Check for weight override from environment
+			weightEnvKey := strings.ToUpper(strings.ReplaceAll(cfg.name, "-", "_")) + "_WEIGHT"
+			weight := cfg.weight
+			if wStr := os.Getenv(weightEnvKey); wStr != "" {
+				if w, err := strconv.Atoi(wStr); err == nil && w > 0 {
+					weight = w
+				}
+			}
+			lb.AddWorker(cfg.name, url, cfg.color, weight, cfg.maxLoad)
+			log.Printf("Added worker: %s -> %s (weight=%d, maxLoad=%d)", cfg.name, url, weight, cfg.maxLoad)
 		}
 	}
 

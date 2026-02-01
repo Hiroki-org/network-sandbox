@@ -415,29 +415,51 @@ function App() {
                     </div>
                     <div className="space-y-2">
                       <div>
-                        <div className="flex justify-between text-sm text-slate-400">
+                        <div className="flex justify-between text-sm text-slate-400 mb-1">
                           <span>負荷</span>
-                          <span>
-                            {worker.currentLoad}/{worker.maxLoad}
+                          <span className="font-mono">
+                            {worker.currentLoad}/{worker.maxLoad}{" "}
+                            <span className="text-xs">
+                              ({Math.round((worker.currentLoad / (worker.maxLoad || 1)) * 100)}%)
+                            </span>
                           </span>
                         </div>
-                        <div className="w-full bg-slate-600 rounded-full h-2 mt-1">
-                          <div
-                            className="h-2 rounded-full transition-all"
-                            style={{
-                              width: `${Math.min(
-                                (worker.currentLoad / (worker.maxLoad || 1)) *
-                                  100,
-                                100,
-                              )}%`,
-                              backgroundColor: worker.color,
-                            }}
-                          />
+                        {/* Segmented load bar */}
+                        <div className="flex gap-0.5 h-3">
+                          {Array.from({ length: worker.maxLoad || 5 }).map((_, idx) => {
+                            const isActive = idx < worker.currentLoad;
+                            const loadPercent = worker.currentLoad / (worker.maxLoad || 1);
+                            let barColor = worker.color;
+                            if (isActive) {
+                              if (loadPercent >= 0.9) {
+                                barColor = "#ef4444"; // red
+                              } else if (loadPercent >= 0.7) {
+                                barColor = "#f59e0b"; // amber
+                              } else if (loadPercent >= 0.5) {
+                                barColor = "#eab308"; // yellow
+                              }
+                            }
+                            return (
+                              <div
+                                key={idx}
+                                className="flex-1 rounded-sm transition-all duration-300"
+                                style={{
+                                  backgroundColor: isActive ? barColor : "#475569",
+                                  opacity: isActive ? 1 : 0.3,
+                                }}
+                              />
+                            );
+                          })}
+                        </div>
+                        {/* Capacity indicator */}
+                        <div className="flex justify-between text-xs text-slate-500 mt-1">
+                          <span>0</span>
+                          <span>容量: {worker.maxLoad}</span>
                         </div>
                       </div>
                       <div className="flex justify-between text-sm">
                         <span className="text-slate-400">キュー</span>
-                        <span>{worker.queueDepth}</span>
+                        <span>{worker.queueDepth ?? 0}</span>
                       </div>
                       <div className="flex justify-between items-center text-sm">
                         <span className="text-slate-400">重み</span>

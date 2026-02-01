@@ -31,10 +31,11 @@ services:
       - PORT=8080
       - WORKER_NAME=go-worker-1
       - WORKER_COLOR=#3B82F6
-      - MAX_CONCURRENT_REQUESTS=10
-      - RESPONSE_DELAY_MS=100
-      - FAILURE_RATE=0.0
-      - QUEUE_SIZE=50
+      - MAX_CONCURRENT_REQUESTS=15
+      - RESPONSE_DELAY_MS=50
+      - FAILURE_RATE=0.02
+      - QUEUE_SIZE=80
+      - INITIAL_WEIGHT=5
     networks:
       - sandbox-network
     restart: unless-stopped
@@ -45,10 +46,11 @@ services:
       - PORT=8080
       - WORKER_NAME=go-worker-2
       - WORKER_COLOR=#6366F1
-      - MAX_CONCURRENT_REQUESTS=15
-      - RESPONSE_DELAY_MS=80
-      - FAILURE_RATE=0.0
-      - QUEUE_SIZE=50
+      - MAX_CONCURRENT_REQUESTS=8
+      - RESPONSE_DELAY_MS=120
+      - FAILURE_RATE=0.08
+      - QUEUE_SIZE=40
+      - INITIAL_WEIGHT=2
     networks:
       - sandbox-network
     restart: unless-stopped
@@ -60,10 +62,11 @@ services:
       - PORT=8080
       - WORKER_NAME=rust-worker-1
       - WORKER_COLOR=#F97316
-      - MAX_CONCURRENT_REQUESTS=12
-      - RESPONSE_DELAY_MS=90
-      - FAILURE_RATE=0.0
-      - QUEUE_SIZE=50
+      - MAX_CONCURRENT_REQUESTS=20
+      - RESPONSE_DELAY_MS=40
+      - FAILURE_RATE=0.01
+      - QUEUE_SIZE=100
+      - INITIAL_WEIGHT=6
     networks:
       - sandbox-network
     restart: unless-stopped
@@ -74,10 +77,11 @@ services:
       - PORT=8080
       - WORKER_NAME=rust-worker-2
       - WORKER_COLOR=#EAB308
-      - MAX_CONCURRENT_REQUESTS=8
-      - RESPONSE_DELAY_MS=120
-      - FAILURE_RATE=0.05
-      - QUEUE_SIZE=40
+      - MAX_CONCURRENT_REQUESTS=5
+      - RESPONSE_DELAY_MS=200
+      - FAILURE_RATE=0.15
+      - QUEUE_SIZE=25
+      - INITIAL_WEIGHT=1
     networks:
       - sandbox-network
     restart: unless-stopped
@@ -89,10 +93,11 @@ services:
       - PORT=8080
       - WORKER_NAME=python-worker-1
       - WORKER_COLOR=#10B981
-      - MAX_CONCURRENT_REQUESTS=8
-      - RESPONSE_DELAY_MS=150
-      - FAILURE_RATE=0.0
-      - QUEUE_SIZE=40
+      - MAX_CONCURRENT_REQUESTS=6
+      - RESPONSE_DELAY_MS=250
+      - FAILURE_RATE=0.20
+      - QUEUE_SIZE=30
+      - INITIAL_WEIGHT=1
     networks:
       - sandbox-network
     restart: unless-stopped
@@ -104,9 +109,10 @@ services:
       - WORKER_NAME=python-worker-2
       - WORKER_COLOR=#14B8A6
       - MAX_CONCURRENT_REQUESTS=10
-      - RESPONSE_DELAY_MS=100
-      - FAILURE_RATE=0.02
-      - QUEUE_SIZE=50
+      - RESPONSE_DELAY_MS=80
+      - FAILURE_RATE=0.05
+      - QUEUE_SIZE=60
+      - INITIAL_WEIGHT=3
     networks:
       - sandbox-network
     restart: unless-stopped
