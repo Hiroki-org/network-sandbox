@@ -1,6 +1,6 @@
-FROM rust:1.75-alpine AS builder
+FROM rust:1.82-slim-bookworm AS builder
 
-RUN apk add --no-cache musl-dev
+RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
@@ -13,9 +13,9 @@ COPY src ./src
 RUN touch src/main.rs
 RUN cargo build --release
 
-FROM alpine:3.19
+FROM debian:bookworm-slim
 
-RUN apk --no-cache add ca-certificates
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates openssl && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY --from=builder /app/target/release/worker-rust .

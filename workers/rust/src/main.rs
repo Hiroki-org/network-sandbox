@@ -152,7 +152,6 @@ fn get_env_f64(key: &str, default: f64) -> f64 {
 /// assert_eq!(cfg.failure_rate, 0.0);
 /// assert_eq!(cfg.queue_size, 50);
 /// ```
-fn load_config() -> Configuration;
 fn load_config() -> Configuration {
     Configuration {
         max_concurrent_requests: get_env_i32("MAX_CONCURRENT_REQUESTS", 10),
