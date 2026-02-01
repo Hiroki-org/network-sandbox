@@ -306,9 +306,9 @@ async def update_config(new_config: Configuration):
         # Handle queue_size change with semaphore synchronization
         if new_config.queue_size > 0 and new_config.queue_size != config.queue_size:
             async with requests_lock:
-                current_active = active_requests
-            async with queue_depth_lock:
-                current_depth = queue_depth
+                async with queue_depth_lock:
+                    current_active = active_requests
+                    current_depth = queue_depth
             
             if current_active > 0 or current_depth > 0:
                 raise HTTPException(

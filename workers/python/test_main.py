@@ -509,7 +509,8 @@ class TestFailureSimulation:
 
 
 class TestLoadSimulation:
-    def test_health_status_under_load(self, client, reset_state):
+    @pytest.mark.usefixtures("reset_state")
+    def test_health_status_under_load(self, client):
         """Test health status changes under different load levels"""
         main.active_requests = 2
         response = client.get("/health")
@@ -528,7 +529,8 @@ class TestLoadSimulation:
         data = response.json()
         assert data["status"] == "unhealthy"
 
-    def test_health_status_with_queue_depth(self, client, reset_state):
+    @pytest.mark.usefixtures("reset_state")
+    def test_health_status_with_queue_depth(self, client):
         """Test health status considers queue depth"""
         main.queue_depth = 46  # > 90% of 50
         response = client.get("/health")
