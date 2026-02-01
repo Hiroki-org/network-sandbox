@@ -7,17 +7,20 @@ import React, {
 } from "react";
 
 interface Worker {
-  id: string;
+  id?: string;
   name: string;
+  url: string;
   color: string;
-  status: string;
-  currentLoad: number;
-  maxLoad: number;
-  queueDepth: number;
-  healthy: boolean;
-  circuitOpen: boolean;
   weight: number;
+  maxLoad: number;
+  healthy: boolean;
+  currentLoad: number;
   enabled: boolean;
+  totalRequests: number;
+  failedRequests: number;
+  circuitOpen: boolean;
+  status?: string;
+  queueDepth?: number;
 }
 
 interface TaskResult {
@@ -33,8 +36,6 @@ interface TaskResult {
 interface LoadBalancerStatus {
   algorithm: string;
   workers: Worker[];
-  totalRequests: number;
-  successRate: number;
 }
 
 const API_URL = process.env.REACT_APP_API_URL || "http://localhost:8000";
@@ -251,9 +252,9 @@ function App() {
     const avgResponseTime =
       tasks.length > 0
         ? Math.round(
-            tasks.reduce((sum, t) => sum + t.processingTimeMs, 0) /
-              tasks.length,
-          )
+          tasks.reduce((sum, t) => sum + t.processingTimeMs, 0) /
+          tasks.length,
+        )
         : 0;
     return { successCount, failureCount, avgResponseTime };
   }, [tasks]);
@@ -271,9 +272,8 @@ function App() {
           </p>
           <div className="flex items-center gap-2 mt-2">
             <span
-              className={`w-3 h-3 rounded-full ${
-                connected ? "bg-green-500" : "bg-red-500"
-              }`}
+              className={`w-3 h-3 rounded-full ${connected ? "bg-green-500" : "bg-red-500"
+                }`}
             />
             <span className="text-sm text-slate-400">
               {connected ? "接続中" : "接続待ち..."}
@@ -317,11 +317,10 @@ function App() {
                 </div>
                 <button
                   onClick={() => setIsRunning(!isRunning)}
-                  className={`w-full py-3 px-4 rounded-lg font-semibold transition ${
-                    isRunning
+                  className={`w-full py-3 px-4 rounded-lg font-semibold transition ${isRunning
                       ? "bg-red-600 hover:bg-red-700"
                       : "bg-blue-600 hover:bg-blue-700"
-                  }`}
+                    }`}
                 >
                   {isRunning ? "停止" : "開始"}
                 </button>
@@ -343,11 +342,10 @@ function App() {
                   <button
                     key={algo.id}
                     onClick={() => changeAlgorithm(algo.id)}
-                    className={`w-full text-left px-4 py-3 rounded-lg transition ${
-                      status?.algorithm === algo.id
+                    className={`w-full text-left px-4 py-3 rounded-lg transition ${status?.algorithm === algo.id
                         ? "bg-blue-600"
                         : "bg-slate-700 hover:bg-slate-600"
-                    }`}
+                      }`}
                   >
                     <div className="font-medium">{algo.name}</div>
                     <div className="text-sm text-slate-400">{algo.desc}</div>
@@ -503,9 +501,8 @@ function App() {
                   tasks.map((task) => (
                     <div
                       key={task.id}
-                      className={`flex items-center justify-between p-3 rounded-lg ${
-                        task.success ? "bg-slate-700" : "bg-red-900/30"
-                      }`}
+                      className={`flex items-center justify-between p-3 rounded-lg ${task.success ? "bg-slate-700" : "bg-red-900/30"
+                        }`}
                     >
                       <div className="flex items-center gap-3">
                         <div

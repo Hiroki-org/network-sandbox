@@ -287,12 +287,15 @@ async def update_config(new_config: Configuration):
             - `max_concurrent_requests` が 0 より大きい場合に適用
             - `response_delay_ms` が 0 以上の場合に適用
             - `failure_rate` が 0.0 以上 1.0 以下の場合に適用
-            - `queue_size` が 0 より大きい場合に適用
+            - `queue_size` が 0 より大きい場合に適用（アクティブリクエストがない場合のみ）
     
     Returns:
         Configuration: 更新後のランタイム設定インスタンス。
+    
+    Raises:
+        HTTPException: queue_size変更時にアクティブなリクエストがある場合は400エラー
     """
-    global config
+    global config, queue_semaphore
     with config_lock:
         if new_config.max_concurrent_requests > 0:
             config.max_concurrent_requests = new_config.max_concurrent_requests
@@ -300,8 +303,26 @@ async def update_config(new_config: Configuration):
             config.response_delay_ms = new_config.response_delay_ms
         if 0.0 <= new_config.failure_rate <= 1.0:
             config.failure_rate = new_config.failure_rate
-        if new_config.queue_size > 0:
+        
+        # Handle queue_size change with semaphore synchronization
+        if new_config.queue_size > 0 and new_config.queue_size != config.queue_size:
+            with requests_lock:
+                current_active = active_requests
+            with queue_depth_lock:
+                current_depth = queue_depth
+            
+            if current_active > 0 or current_depth > 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "error": f"Cannot change queue_size while requests are active (active={current_active}, queued={current_depth})",
+                        "worker": WORKER_NAME,
+                    },
+                )
+            
             config.queue_size = new_config.queue_size
+            queue_semaphore = asyncio.Semaphore(config.queue_size)
+        
         print(f"Config updated: {config}")
         return config
 

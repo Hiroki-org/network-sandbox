@@ -8,9 +8,11 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -78,7 +80,21 @@ var (
 )
 
 var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
+	CheckOrigin: func(r *http.Request) bool {
+		allowedOrigins := os.Getenv("ALLOWED_ORIGINS")
+		if allowedOrigins == "" {
+			// Development mode: allow all origins
+			return true
+		}
+		origin := r.Header.Get("Origin")
+		for _, allowed := range strings.Split(allowedOrigins, ",") {
+			if strings.TrimSpace(allowed) == origin {
+				return true
+			}
+		}
+		log.Printf("WebSocket connection rejected from origin: %s", origin)
+		return false
+	},
 }
 
 func init() {
@@ -281,7 +297,11 @@ func (lb *LoadBalancer) BroadcastStatus() {
 	lb.wsClientsMu.Lock()
 	defer lb.wsClientsMu.Unlock()
 	status := lb.GetStatus()
-	data, _ := json.Marshal(status)
+	data, err := json.Marshal(status)
+	if err != nil {
+		log.Printf("Failed to marshal status for broadcast: %v", err)
+		return
+	}
 	for client := range lb.wsClients {
 		if err := client.WriteMessage(websocket.TextMessage, data); err != nil {
 			client.Close()
@@ -533,7 +553,11 @@ func main() {
 		}
 	}
 
-	ctx := context.Background()
+	// Create cancellable context for graceful shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Start background goroutines with cancellable context
 	go lb.HealthCheck(ctx, 5*time.Second)
 	go lb.StartBroadcast(ctx, 1*time.Second)
 
@@ -552,8 +576,30 @@ func main() {
 	}
 
 	handler := corsMiddleware(mux)
+
+	server := &http.Server{
+		Addr:    fmt.Sprintf(":%s", port),
+		Handler: handler,
+	}
+
+	// Handle shutdown signals
+	go func() {
+		sigChan := make(chan os.Signal, 1)
+		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+		<-sigChan
+		log.Println("Received shutdown signal, stopping...")
+		cancel() // Stop HealthCheck and StartBroadcast goroutines
+
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer shutdownCancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			log.Printf("HTTP server shutdown error: %v", err)
+		}
+	}()
+
 	log.Printf("Load balancer starting on port %s with algorithm %s", port, lb.algorithm)
-	if err := http.ListenAndServe(fmt.Sprintf(":%s", port), handler); err != nil {
+	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
+	log.Println("Load balancer stopped")
 }

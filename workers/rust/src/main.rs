@@ -153,11 +153,16 @@ fn get_env_f64(key: &str, default: f64) -> f64 {
 /// assert_eq!(cfg.queue_size, 50);
 /// ```
 fn load_config() -> Configuration {
+    let max_concurrent = get_env_i32("MAX_CONCURRENT_REQUESTS", 10).max(1);
+    let response_delay = get_env_i32("RESPONSE_DELAY_MS", 100).max(0);
+    let failure_rate = get_env_f64("FAILURE_RATE", 0.0).clamp(0.0, 1.0);
+    let queue_size = get_env_i32("QUEUE_SIZE", 50).max(1);
+
     Configuration {
-        max_concurrent_requests: get_env_i32("MAX_CONCURRENT_REQUESTS", 10),
-        response_delay_ms: get_env_i32("RESPONSE_DELAY_MS", 100),
-        failure_rate: get_env_f64("FAILURE_RATE", 0.0),
-        queue_size: get_env_i32("QUEUE_SIZE", 50),
+        max_concurrent_requests: max_concurrent,
+        response_delay_ms: response_delay,
+        failure_rate,
+        queue_size,
     }
 }
 
@@ -427,8 +432,24 @@ async fn handle_config_update(
     if new_config.failure_rate >= 0.0 && new_config.failure_rate <= 1.0 {
         config.failure_rate = new_config.failure_rate;
     }
-    if new_config.queue_size > 0 {
-        config.queue_size = new_config.queue_size;
+    // Handle queue_size change with semaphore adjustment
+    if new_config.queue_size > 0 && new_config.queue_size != config.queue_size {
+        let delta = new_config.queue_size - config.queue_size;
+        if delta > 0 {
+            // Increase capacity by adding permits
+            state.queue_semaphore.add_permits(delta as usize);
+        }
+        // Note: Decreasing semaphore permits atomically is complex in Tokio;
+        // for simplicity, we only support increasing. Decreasing requires
+        // acquiring permits which may block. Log a warning if decrease attempted.
+        if delta < 0 {
+            tracing::warn!(
+                "Cannot decrease queue_size from {} to {} at runtime; only increases are supported",
+                config.queue_size, new_config.queue_size
+            );
+        } else {
+            config.queue_size = new_config.queue_size;
+        }
     }
     tracing::info!("Config updated: {:?}", *config);
     Json(config.clone())

@@ -121,12 +121,35 @@ func getEnvFloat(key string, defaultVal float64) float64 {
 // loadConfig は環境変数から初期 Configuration を構築して返します。
 // 使用する環境変数とデフォルト値: MAX_CONCURRENT_REQUESTS=10, RESPONSE_DELAY_MS=100, FAILURE_RATE=0.0, QUEUE_SIZE=50。
 // 環境変数が未設定または無効な場合は対応するデフォルト値が使われます。
+// 値は安全な範囲にクランプされます。
 func loadConfig() *Configuration {
+	maxConcurrent := getEnvInt("MAX_CONCURRENT_REQUESTS", 10)
+	if maxConcurrent < 1 {
+		maxConcurrent = 1
+	}
+
+	responseDelay := getEnvInt("RESPONSE_DELAY_MS", 100)
+	if responseDelay < 0 {
+		responseDelay = 0
+	}
+
+	failureRate := getEnvFloat("FAILURE_RATE", 0.0)
+	if failureRate < 0.0 {
+		failureRate = 0.0
+	} else if failureRate > 1.0 {
+		failureRate = 1.0
+	}
+
+	queueSize := getEnvInt("QUEUE_SIZE", 50)
+	if queueSize < 1 {
+		queueSize = 1
+	}
+
 	return &Configuration{
-		MaxConcurrentRequests: getEnvInt("MAX_CONCURRENT_REQUESTS", 10),
-		ResponseDelayMs:       getEnvInt("RESPONSE_DELAY_MS", 100),
-		FailureRate:           getEnvFloat("FAILURE_RATE", 0.0),
-		QueueSize:             getEnvInt("QUEUE_SIZE", 50),
+		MaxConcurrentRequests: maxConcurrent,
+		ResponseDelayMs:       responseDelay,
+		FailureRate:           failureRate,
+		QueueSize:             queueSize,
 	}
 }
 
@@ -254,7 +277,7 @@ func handleTask(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleHealth は現在の同時処理数とキュー深度を評価してサービスのヘルス状態を判定し、JSON で結果を返します。
-// 
+//
 // 判定は現在の負荷比率（現在の同時処理数 / MaxConcurrentRequests）とキュー比率（キュー深度 / QueueSize）に基づき、
 // いずれかの比率が 0.9 以上で "unhealthy"、いずれかが 0.7 以上で "degraded"、それ以外は "healthy" を返します。
 // レスポンスは Content-Type: application/json を設定し、HealthResponse（Status, CurrentLoad, QueueDepth）をエンコードして返します.
@@ -320,12 +343,12 @@ func corsMiddleware(next http.Handler) http.Handler {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-		
+
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		
+
 		next.ServeHTTP(w, r)
 	})
 }
