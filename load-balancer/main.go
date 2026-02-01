@@ -28,7 +28,7 @@ type Worker struct {
 	Weight         int    `json:"weight"`
 	MaxLoad        int    `json:"maxLoad"`
 	Healthy        bool   `json:"healthy"`
-	CurrentLoad    int    `json:"currentLoad"`
+	CurrentLoad    int32  `json:"currentLoad"`
 	Enabled        bool   `json:"enabled"`
 	TotalRequests  int64  `json:"totalRequests"`
 	FailedRequests int64  `json:"failedRequests"`
@@ -44,6 +44,7 @@ type LoadBalancer struct {
 	roundRobinIdx int
 	wsClients     map[*websocket.Conn]bool
 	wsClientsMu   sync.Mutex
+	broadcastMu   sync.Mutex
 }
 
 // Prometheus metrics
@@ -130,12 +131,7 @@ func (lb *LoadBalancer) SelectWorker() *Worker {
 	lb.mu.Lock()
 	defer lb.mu.Unlock()
 
-	available := make([]*Worker, 0)
-	for _, w := range lb.workers {
-		if w.Healthy && w.Enabled && !w.CircuitOpen {
-			available = append(available, w)
-		}
-	}
+	available := lb.getHealthyWorkers()
 	if len(available) == 0 {
 		return nil
 	}
@@ -146,10 +142,24 @@ func (lb *LoadBalancer) SelectWorker() *Worker {
 	case "weighted":
 		return lb.weighted(available)
 	case "random":
-		return available[rand.Intn(len(available))]
+		return lb.random(available)
 	default:
 		return lb.roundRobin(available)
 	}
+}
+
+func (lb *LoadBalancer) random(workers []*Worker) *Worker {
+	return workers[rand.Intn(len(workers))]
+}
+
+func (lb *LoadBalancer) getHealthyWorkers() []*Worker {
+	available := make([]*Worker, 0)
+	for _, w := range lb.workers {
+		if w.Healthy && w.Enabled && !w.CircuitOpen {
+			available = append(available, w)
+		}
+	}
+	return available
 }
 
 func (lb *LoadBalancer) roundRobin(workers []*Worker) *Worker {
@@ -294,18 +304,29 @@ func (lb *LoadBalancer) UpdateWorker(name string, enabled *bool, weight *int) bo
 
 // BroadcastStatus sends status to all WebSocket clients
 func (lb *LoadBalancer) BroadcastStatus() {
+	// Serialize broadcasts to prevent concurrent writes to the same connection
+	lb.broadcastMu.Lock()
+	defer lb.broadcastMu.Unlock()
+
 	lb.wsClientsMu.Lock()
-	defer lb.wsClientsMu.Unlock()
+	clients := make([]*websocket.Conn, 0, len(lb.wsClients))
+	for client := range lb.wsClients {
+		clients = append(clients, client)
+	}
+	lb.wsClientsMu.Unlock()
+
 	status := lb.GetStatus()
 	data, err := json.Marshal(status)
 	if err != nil {
 		log.Printf("Failed to marshal status for broadcast: %v", err)
 		return
 	}
-	for client := range lb.wsClients {
+	for _, client := range clients {
 		if err := client.WriteMessage(websocket.TextMessage, data); err != nil {
 			client.Close()
+			lb.wsClientsMu.Lock()
 			delete(lb.wsClients, client)
+			lb.wsClientsMu.Unlock()
 		}
 	}
 }
@@ -484,13 +505,14 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	lb.wsClientsMu.Lock()
-	lb.wsClients[conn] = true
-	lb.wsClientsMu.Unlock()
-
+	// Send initial status before adding to the pool to avoid race with BroadcastStatus
 	status := lb.GetStatus()
 	data, _ := json.Marshal(status)
 	conn.WriteMessage(websocket.TextMessage, data)
+
+	lb.wsClientsMu.Lock()
+	lb.wsClients[conn] = true
+	lb.wsClientsMu.Unlock()
 
 	for {
 		if _, _, err := conn.ReadMessage(); err != nil {
