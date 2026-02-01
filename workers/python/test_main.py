@@ -5,6 +5,8 @@ import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import patch, MagicMock
 
+# Import main module to access globals
+import main
 # Import the app and functions from main
 from main import (
     app,
@@ -15,32 +17,24 @@ from main import (
     HealthResponse,
     load_config,
     config,
-    active_requests,
-    requests_lock,
-    queue_depth,
-    queue_depth_lock,
 )
 
 
 @pytest.fixture
 def client():
     """Create a test client for the FastAPI app"""
-    return TestClient(app)
+    with TestClient(app) as c:
+        yield c
 
 
 @pytest.fixture
 def reset_state():
     """Reset global state before each test"""
-    global active_requests, queue_depth
-    with requests_lock:
-        active_requests = 0
-    with queue_depth_lock:
-        queue_depth = 0
+    main.active_requests = 0
+    main.queue_depth = 0
     yield
-    with requests_lock:
-        active_requests = 0
-    with queue_depth_lock:
-        queue_depth = 0
+    main.active_requests = 0
+    main.queue_depth = 0
 
 
 class TestConfiguration:
@@ -233,9 +227,7 @@ class TestHealthEndpoint:
 
     def test_health_endpoint_low_load(self, client, reset_state):
         """Test health endpoint with low load"""
-        global active_requests
-        with requests_lock:
-            active_requests = 2
+        main.active_requests = 2
 
         response = client.get("/health")
         assert response.status_code == 200
@@ -461,7 +453,7 @@ class TestMetricsEndpoint:
 class TestCORSHeaders:
     def test_cors_headers_on_request(self, client):
         """Test CORS headers are present"""
-        response = client.get("/health")
+        response = client.get("/health", headers={"Origin": "http://example.com"})
         assert response.status_code == 200
 
         # CORS headers should be present
@@ -519,36 +511,26 @@ class TestFailureSimulation:
 class TestLoadSimulation:
     def test_health_status_under_load(self, client, reset_state):
         """Test health status changes under different load levels"""
-        global active_requests
-
-        # Test healthy status
-        with requests_lock:
-            active_requests = 2
+        main.active_requests = 2
         response = client.get("/health")
         data = response.json()
         assert data["status"] == "healthy"
 
         # Test degraded status (70% load)
-        with requests_lock:
-            active_requests = 7
+        main.active_requests = 7
         response = client.get("/health")
         data = response.json()
         assert data["status"] == "degraded"
 
         # Test unhealthy status (90% load)
-        with requests_lock:
-            active_requests = 9
+        main.active_requests = 9
         response = client.get("/health")
         data = response.json()
         assert data["status"] == "unhealthy"
 
     def test_health_status_with_queue_depth(self, client, reset_state):
         """Test health status considers queue depth"""
-        global queue_depth
-
-        # Test with high queue depth
-        with queue_depth_lock:
-            queue_depth = 46  # > 90% of 50
+        main.queue_depth = 46  # > 90% of 50
         response = client.get("/health")
         data = response.json()
         assert data["status"] == "unhealthy"
@@ -604,9 +586,7 @@ class TestEdgeCases:
 class TestStateManagement:
     def test_active_requests_tracking(self, client, reset_state):
         """Test active requests counter"""
-        global active_requests
-
-        initial = active_requests
+        initial = main.active_requests
 
         # Start a task (in separate thread, won't actually track)
         task_data = {"id": "test-track", "weight": 0.1}
@@ -617,9 +597,7 @@ class TestStateManagement:
 
     def test_queue_depth_tracking(self, client, reset_state):
         """Test queue depth tracking"""
-        global queue_depth
-
-        initial = queue_depth
+        initial = main.queue_depth
 
         task_data = {"id": "test-queue", "weight": 0.1}
         response = client.post("/task", json=task_data)
