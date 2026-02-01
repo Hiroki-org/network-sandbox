@@ -507,8 +507,17 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	// Send initial status before adding to the pool to avoid race with BroadcastStatus
 	status := lb.GetStatus()
-	data, _ := json.Marshal(status)
-	conn.WriteMessage(websocket.TextMessage, data)
+	data, err := json.Marshal(status)
+	if err != nil {
+		log.Printf("Failed to marshal initial status: %v", err)
+		conn.Close()
+		return
+	}
+	if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
+		log.Printf("Failed to send initial status: %v", err)
+		conn.Close()
+		return
+	}
 
 	lb.wsClientsMu.Lock()
 	lb.wsClients[conn] = true
