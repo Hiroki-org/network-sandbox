@@ -917,4 +917,598 @@ describe('App Component', () => {
       });
     });
   });
+
+  describe('Worker Configuration Panel', () => {
+    const mockStatusWithWorker = {
+      algorithm: 'round-robin',
+      workers: [
+        {
+          id: 'worker-1',
+          name: 'go-worker-1',
+          color: '#3B82F6',
+          status: 'healthy',
+          currentLoad: 2,
+          maxLoad: 10,
+          queueDepth: 1,
+          healthy: true,
+          circuitOpen: false,
+          weight: 2,
+          enabled: true
+        }
+      ]
+    };
+
+    const mockWorkerConfig = {
+      max_concurrent_requests: 3,
+      response_delay_ms: 500,
+      failure_rate: 0.02,
+      queue_size: 10
+    };
+
+    it('should fetch worker configs when status is received', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => mockStatusWithWorker
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => mockWorkerConfig
+        });
+
+      render(<App />);
+
+      await waitFor(() => {
+        expect(mockFetch).toHaveBeenCalledWith(
+          expect.stringContaining('/workers/go-worker-1/config')
+        );
+      });
+    });
+
+    it('should expand worker config panel when toggle is clicked', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => mockWorkerConfig
+        });
+
+      render(<App />);
+
+      await waitFor(() => {
+        expect(MockWebSocket.instances.length).toBeGreaterThan(0);
+      });
+
+      act(() => {
+        const ws = MockWebSocket.instances[0];
+        if (ws.onmessage) {
+          ws.onmessage(new MessageEvent('message', {
+            data: JSON.stringify(mockStatusWithWorker)
+          }));
+        }
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText('go-worker-1')).toBeInTheDocument();
+      });
+
+      const expandButton = screen.getByText('▼ 設定を開く');
+      fireEvent.click(expandButton);
+
+      await waitFor(() => {
+        expect(screen.getByText('▲ 設定を閉じる')).toBeInTheDocument();
+      });
+    });
+
+    it('should update max concurrent requests config', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => mockWorkerConfig
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ ...mockWorkerConfig, max_concurrent_requests: 5 })
+        });
+
+      render(<App />);
+
+      await waitFor(() => {
+        expect(MockWebSocket.instances.length).toBeGreaterThan(0);
+      });
+
+      act(() => {
+        const ws = MockWebSocket.instances[0];
+        if (ws.onmessage) {
+          ws.onmessage(new MessageEvent('message', {
+            data: JSON.stringify(mockStatusWithWorker)
+          }));
+        }
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText('go-worker-1')).toBeInTheDocument();
+      });
+
+      const expandButton = screen.getByText('▼ 設定を開く');
+      fireEvent.click(expandButton);
+
+      await waitFor(() => {
+        const configInputs = screen.getAllByDisplayValue('3');
+        const maxConcurrentInput = configInputs.find(el =>
+          (el as HTMLInputElement).type === 'number' &&
+          el.previousElementSibling?.textContent?.includes('同時リクエスト数')
+        );
+
+        if (maxConcurrentInput) {
+          fireEvent.change(maxConcurrentInput, { target: { value: '5' } });
+        }
+      });
+
+      await waitFor(() => {
+        expect(mockFetch).toHaveBeenCalledWith(
+          expect.stringContaining('/workers/go-worker-1/config'),
+          expect.objectContaining({
+            method: 'PUT',
+            body: JSON.stringify({ max_concurrent_requests: 5 })
+          })
+        );
+      });
+    });
+
+    it('should update response delay config', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => mockWorkerConfig
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ ...mockWorkerConfig, response_delay_ms: 1000 })
+        });
+
+      render(<App />);
+
+      await waitFor(() => {
+        expect(MockWebSocket.instances.length).toBeGreaterThan(0);
+      });
+
+      act(() => {
+        const ws = MockWebSocket.instances[0];
+        if (ws.onmessage) {
+          ws.onmessage(new MessageEvent('message', {
+            data: JSON.stringify(mockStatusWithWorker)
+          }));
+        }
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText('go-worker-1')).toBeInTheDocument();
+      });
+
+      const expandButton = screen.getByText('▼ 設定を開く');
+      fireEvent.click(expandButton);
+
+      await waitFor(() => {
+        const delaySliders = screen.getAllByRole('slider');
+        const responseDelaySlider = delaySliders.find(slider =>
+          slider.getAttribute('max') === '5000'
+        );
+
+        if (responseDelaySlider) {
+          fireEvent.change(responseDelaySlider, { target: { value: '1000' } });
+        }
+      });
+
+      await waitFor(() => {
+        expect(mockFetch).toHaveBeenCalledWith(
+          expect.stringContaining('/workers/go-worker-1/config'),
+          expect.objectContaining({
+            method: 'PUT',
+            body: JSON.stringify({ response_delay_ms: 1000 })
+          })
+        );
+      });
+    });
+
+    it('should update failure rate config', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => mockWorkerConfig
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ ...mockWorkerConfig, failure_rate: 0.5 })
+        });
+
+      render(<App />);
+
+      await waitFor(() => {
+        expect(MockWebSocket.instances.length).toBeGreaterThan(0);
+      });
+
+      act(() => {
+        const ws = MockWebSocket.instances[0];
+        if (ws.onmessage) {
+          ws.onmessage(new MessageEvent('message', {
+            data: JSON.stringify(mockStatusWithWorker)
+          }));
+        }
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText('go-worker-1')).toBeInTheDocument();
+      });
+
+      const expandButton = screen.getByText('▼ 設定を開く');
+      fireEvent.click(expandButton);
+
+      await waitFor(() => {
+        const failureSliders = screen.getAllByRole('slider');
+        const failureRateSlider = failureSliders.find(slider =>
+          slider.getAttribute('max') === '1' && slider.getAttribute('step') === '0.01'
+        );
+
+        if (failureRateSlider) {
+          fireEvent.change(failureRateSlider, { target: { value: '0.5' } });
+        }
+      });
+
+      await waitFor(() => {
+        expect(mockFetch).toHaveBeenCalledWith(
+          expect.stringContaining('/workers/go-worker-1/config'),
+          expect.objectContaining({
+            method: 'PUT',
+            body: JSON.stringify({ failure_rate: 0.5 })
+          })
+        );
+      });
+    });
+
+    it('should update queue size config', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => mockWorkerConfig
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({ ...mockWorkerConfig, queue_size: 20 })
+        });
+
+      render(<App />);
+
+      await waitFor(() => {
+        expect(MockWebSocket.instances.length).toBeGreaterThan(0);
+      });
+
+      act(() => {
+        const ws = MockWebSocket.instances[0];
+        if (ws.onmessage) {
+          ws.onmessage(new MessageEvent('message', {
+            data: JSON.stringify(mockStatusWithWorker)
+          }));
+        }
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText('go-worker-1')).toBeInTheDocument();
+      });
+
+      const expandButton = screen.getByText('▼ 設定を開く');
+      fireEvent.click(expandButton);
+
+      await waitFor(() => {
+        const queueInput = screen.getByDisplayValue('10');
+        if (queueInput && (queueInput as HTMLInputElement).type === 'number') {
+          fireEvent.change(queueInput, { target: { value: '20' } });
+        }
+      });
+
+      await waitFor(() => {
+        expect(mockFetch).toHaveBeenCalledWith(
+          expect.stringContaining('/workers/go-worker-1/config'),
+          expect.objectContaining({
+            method: 'PUT',
+            body: JSON.stringify({ queue_size: 20 })
+          })
+        );
+      });
+    });
+
+    it('should handle fetch error for worker config gracefully', async () => {
+      mockFetch.mockRejectedValueOnce(new Error('Network error'));
+      const consoleSpy = jest.spyOn(console, 'error').mockImplementation();
+
+      render(<App />);
+
+      await waitFor(() => {
+        expect(MockWebSocket.instances.length).toBeGreaterThan(0);
+      });
+
+      act(() => {
+        const ws = MockWebSocket.instances[0];
+        if (ws.onmessage) {
+          ws.onmessage(new MessageEvent('message', {
+            data: JSON.stringify(mockStatusWithWorker)
+          }));
+        }
+      });
+
+      await waitFor(() => {
+        expect(mockFetch).toHaveBeenCalled();
+      });
+
+      consoleSpy.mockRestore();
+    });
+
+    it('should display config values correctly in expanded panel', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => mockWorkerConfig
+        });
+
+      render(<App />);
+
+      await waitFor(() => {
+        expect(MockWebSocket.instances.length).toBeGreaterThan(0);
+      });
+
+      act(() => {
+        const ws = MockWebSocket.instances[0];
+        if (ws.onmessage) {
+          ws.onmessage(new MessageEvent('message', {
+            data: JSON.stringify(mockStatusWithWorker)
+          }));
+        }
+      });
+
+      await waitFor(() => {
+        expect(screen.getByText('go-worker-1')).toBeInTheDocument();
+      });
+
+      const expandButton = screen.getByText('▼ 設定を開く');
+      fireEvent.click(expandButton);
+
+      await waitFor(() => {
+        expect(screen.getByText(/同時リクエスト数: 3/)).toBeInTheDocument();
+        expect(screen.getByText(/応答遅延: 500ms/)).toBeInTheDocument();
+        expect(screen.getByText(/失敗率: 2%/)).toBeInTheDocument();
+        expect(screen.getByText(/キューサイズ: 10/)).toBeInTheDocument();
+      });
+    });
+  });
+
+  describe('Enhanced Log Coloring', () => {
+    it('should apply red color class for failed tasks', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        json: async () => ({
+          error: 'Server error',
+          worker: 'test-worker'
+        })
+      });
+
+      render(<App />);
+
+      const singleButton = screen.getByText('単発リクエスト');
+      fireEvent.click(singleButton);
+
+      await waitFor(() => {
+        const logEntries = document.querySelectorAll('.bg-red-900\\/50');
+        expect(logEntries.length).toBeGreaterThan(0);
+      });
+    });
+
+    it('should apply yellow color class for slow tasks (>= 1200ms)', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          id: 'task-1',
+          worker: 'test-worker',
+          color: '#3B82F6',
+          processingTimeMs: 1300,
+          timestamp: new Date().toISOString()
+        })
+      });
+
+      render(<App />);
+
+      const singleButton = screen.getByText('単発リクエスト');
+      fireEvent.click(singleButton);
+
+      await waitFor(() => {
+        const logEntries = document.querySelectorAll('.bg-yellow-900\\/30');
+        expect(logEntries.length).toBeGreaterThan(0);
+      });
+    });
+
+    it('should apply amber color class for moderately slow tasks (>= 800ms)', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          id: 'task-1',
+          worker: 'test-worker',
+          color: '#3B82F6',
+          processingTimeMs: 900,
+          timestamp: new Date().toISOString()
+        })
+      });
+
+      render(<App />);
+
+      const singleButton = screen.getByText('単発リクエスト');
+      fireEvent.click(singleButton);
+
+      await waitFor(() => {
+        const logEntries = document.querySelectorAll('.bg-amber-900\\/20');
+        expect(logEntries.length).toBeGreaterThan(0);
+      });
+    });
+
+    it('should apply green/normal color class for fast tasks', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          id: 'task-1',
+          worker: 'test-worker',
+          color: '#3B82F6',
+          processingTimeMs: 200,
+          timestamp: new Date().toISOString()
+        })
+      });
+
+      render(<App />);
+
+      const singleButton = screen.getByText('単発リクエスト');
+      fireEvent.click(singleButton);
+
+      await waitFor(() => {
+        const logEntries = document.querySelectorAll('.bg-slate-700');
+        expect(logEntries.length).toBeGreaterThan(0);
+      });
+    });
+
+    it('should show response time in appropriate text color', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          id: 'task-1',
+          worker: 'test-worker',
+          color: '#3B82F6',
+          processingTimeMs: 1500,
+          timestamp: new Date().toISOString()
+        })
+      });
+
+      render(<App />);
+
+      const singleButton = screen.getByText('単発リクエスト');
+      fireEvent.click(singleButton);
+
+      await waitFor(() => {
+        const textElements = document.querySelectorAll('.text-yellow-400');
+        expect(textElements.length).toBeGreaterThan(0);
+      });
+    });
+  });
+
+  describe('Request Rate Changes', () => {
+    it('should have default request rate of 2 RPS', () => {
+      render(<App />);
+      expect(screen.getByText(/2\/秒/)).toBeInTheDocument();
+    });
+
+    it('should allow request rate adjustment up to 20 RPS', () => {
+      render(<App />);
+      const slider = screen.getAllByRole('slider')[0];
+
+      expect(slider).toHaveAttribute('max', '20');
+      expect(slider).toHaveAttribute('min', '1');
+    });
+
+    it('should update interval when request rate changes', async () => {
+      jest.useFakeTimers();
+
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          id: 'task-1',
+          worker: 'test-worker',
+          color: '#3B82F6',
+          processingTimeMs: 100,
+          timestamp: new Date().toISOString()
+        })
+      });
+
+      render(<App />);
+
+      const slider = screen.getAllByRole('slider')[0];
+      fireEvent.change(slider, { target: { value: '4' } });
+
+      const startButton = screen.getByText('開始');
+      fireEvent.click(startButton);
+
+      act(() => {
+        jest.advanceTimersByTime(250); // 1000ms / 4 RPS = 250ms interval
+      });
+
+      await waitFor(() => {
+        expect(mockFetch).toHaveBeenCalled();
+      });
+
+      jest.useRealTimers();
+    });
+  });
+
+  describe('Timestamp Formatting', () => {
+    it('should format timestamps in Japanese locale', async () => {
+      const testDate = new Date('2024-01-15T10:30:45.123Z');
+
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          id: 'task-1',
+          worker: 'test-worker',
+          color: '#3B82F6',
+          processingTimeMs: 100,
+          timestamp: testDate.toISOString()
+        })
+      });
+
+      render(<App />);
+
+      const singleButton = screen.getByText('単発リクエスト');
+      fireEvent.click(singleButton);
+
+      await waitFor(() => {
+        // Check that some timestamp text is present (format depends on locale)
+        const timestamps = screen.getAllByText(/\d{2}:\d{2}:\d{2}/);
+        expect(timestamps.length).toBeGreaterThan(0);
+      });
+    });
+  });
+
+  describe('Task Log Limit', () => {
+    it('should limit task log to 50 entries', async () => {
+      const responses = Array.from({ length: 55 }, (_, i) => ({
+        ok: true,
+        json: async () => ({
+          id: `task-${i}`,
+          worker: 'test-worker',
+          color: '#3B82F6',
+          processingTimeMs: 100,
+          timestamp: new Date().toISOString()
+        })
+      }));
+
+      mockFetch.mockImplementation(() =>
+        Promise.resolve(responses.shift() as any)
+      );
+
+      jest.useFakeTimers();
+      render(<App />);
+
+      const startButton = screen.getByText('開始');
+      fireEvent.click(startButton);
+
+      for (let i = 0; i < 55; i++) {
+        act(() => {
+          jest.advanceTimersByTime(100);
+        });
+        await waitFor(() => {}, { timeout: 10 });
+      }
+
+      const stopButton = screen.getByText('停止');
+      fireEvent.click(stopButton);
+
+      await waitFor(() => {
+        const taskElements = screen.queryAllByText(/task-/);
+        expect(taskElements.length).toBeLessThanOrEqual(50);
+      });
+
+      jest.useRealTimers();
+    });
+  });
 });
