@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"math/rand"
 	"net/http"
@@ -410,6 +411,15 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 
 var availableAlgorithms = []string{"round-robin", "least-connections", "weighted", "random"}
 
+// validAlgorithms は availableAlgorithms から生成されたバリデーション用の map
+var validAlgorithms = func() map[string]struct{} {
+	m := make(map[string]struct{}, len(availableAlgorithms))
+	for _, a := range availableAlgorithms {
+		m[a] = struct{}{}
+	}
+	return m
+}()
+
 // handleAlgorithm はロードバランサのアルゴリズム設定エンドポイントを処理する。
 // GET リクエストでは現在のアルゴリズムと利用可能なアルゴリズム一覧を JSON で返す。
 // PUT または POST では `{ "algorithm": "<name>" }` を受け取り、許可されたアルゴリズムであれば設定を反映して同様の JSON を返し、設定変更後に接続中クライアントへ状態をブロードキャストする。
@@ -434,10 +444,7 @@ func handleAlgorithm(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Invalid request", http.StatusBadRequest)
 			return
 		}
-		validAlgos := map[string]bool{
-			"round-robin": true, "least-connections": true, "weighted": true, "random": true,
-		}
-		if !validAlgos[req.Algorithm] {
+		if _, ok := validAlgorithms[req.Algorithm]; !ok {
 			http.Error(w, "Invalid algorithm", http.StatusBadRequest)
 			return
 		}
@@ -530,10 +537,12 @@ func handleWorkerConfig(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
-		proxyReq, err = http.NewRequest(http.MethodGet, workerURL+"/config", nil)
+		proxyReq, err = http.NewRequestWithContext(r.Context(), http.MethodGet, workerURL+"/config", nil)
 	case http.MethodPut, http.MethodPost:
-		proxyReq, err = http.NewRequest(r.Method, workerURL+"/config", r.Body)
-		proxyReq.Header.Set("Content-Type", "application/json")
+		proxyReq, err = http.NewRequestWithContext(r.Context(), r.Method, workerURL+"/config", r.Body)
+		if proxyReq != nil {
+			proxyReq.Header.Set("Content-Type", "application/json")
+		}
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -551,13 +560,29 @@ func handleWorkerConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	// Copy response headers and body
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(resp.StatusCode)
+	// Read response body
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		http.Error(w, "Failed to read worker response", http.StatusBadGateway)
+		return
+	}
+
+	// Try to decode as JSON and add worker field
 	var result map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err == nil {
+	if err := json.Unmarshal(body, &result); err == nil {
 		result["worker"] = workerName
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(resp.StatusCode)
 		json.NewEncoder(w).Encode(result)
+	} else {
+		// If not JSON, copy raw response
+		if ct := resp.Header.Get("Content-Type"); ct != "" {
+			w.Header().Set("Content-Type", ct)
+		} else {
+			w.Header().Set("Content-Type", "application/octet-stream")
+		}
+		w.WriteHeader(resp.StatusCode)
+		w.Write(body)
 	}
 }
 
@@ -657,10 +682,12 @@ func main() {
 	mux.HandleFunc("/algorithm", handleAlgorithm)
 	mux.HandleFunc("/health", handleHealth)
 	mux.HandleFunc("/ws", handleWebSocket)
-	// Worker routes - more specific first
+	// Worker routes - use segment matching for safety
 	mux.HandleFunc("/workers/", func(w http.ResponseWriter, r *http.Request) {
-		// Route to config handler if path contains /config
-		if strings.Contains(r.URL.Path, "/config") {
+		// Route based on path segments to avoid misrouting worker names containing "config"
+		path := strings.TrimPrefix(r.URL.Path, "/workers/")
+		parts := strings.Split(strings.TrimSuffix(path, "/"), "/")
+		if len(parts) == 2 && parts[1] == "config" {
 			handleWorkerConfig(w, r)
 		} else {
 			handleWorker(w, r)

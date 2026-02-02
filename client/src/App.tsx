@@ -162,6 +162,11 @@ function App() {
   }, []);
 
   // Fetch worker configs when status changes
+  const workerNames = useMemo(
+    () => status?.workers?.map((w) => w.name).join(",") ?? "",
+    [status?.workers]
+  );
+
   useEffect(() => {
     if (!status?.workers) return;
 
@@ -182,7 +187,7 @@ function App() {
     };
 
     fetchConfigs();
-  }, [status?.workers?.length]);
+  }, [workerNames, status?.workers]);
 
   const sendTask = useCallback(async () => {
     const taskId = `task-${++taskIdRef.current}`;
@@ -484,6 +489,7 @@ function App() {
                             className={`w-3 h-3 rounded-full ${getStatusColor(worker)}`}
                           />
                           <button
+                            type="button"
                             onClick={() =>
                               toggleWorker(worker.name, !worker.enabled)
                             }
