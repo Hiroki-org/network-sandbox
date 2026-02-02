@@ -406,6 +406,8 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(lb.GetStatus())
 }
 
+var availableAlgorithms = []string{"round-robin", "least-connections", "weighted", "random"}
+
 func handleAlgorithm(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -413,7 +415,10 @@ func handleAlgorithm(w http.ResponseWriter, r *http.Request) {
 		algo := lb.algorithm
 		lb.mu.RUnlock()
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"algorithm": algo})
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"algorithm": algo,
+			"available": availableAlgorithms,
+		})
 
 	case http.MethodPut, http.MethodPost:
 		var req struct {
@@ -432,7 +437,10 @@ func handleAlgorithm(w http.ResponseWriter, r *http.Request) {
 		}
 		lb.SetAlgorithm(req.Algorithm)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"algorithm": req.Algorithm})
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"algorithm": req.Algorithm,
+			"available": availableAlgorithms,
+		})
 		lb.BroadcastStatus()
 
 	default:
@@ -475,6 +483,71 @@ func handleWorker(w http.ResponseWriter, r *http.Request) {
 func handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "healthy"})
+}
+
+// handleWorkerConfig proxies config requests to specific workers
+func handleWorkerConfig(w http.ResponseWriter, r *http.Request) {
+	// Extract worker name from path: /workers/{name}/config
+	path := strings.TrimPrefix(r.URL.Path, "/workers/")
+	parts := strings.Split(path, "/")
+	if len(parts) < 2 || parts[1] != "config" {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+	workerName := parts[0]
+
+	// Find worker URL
+	lb.mu.RLock()
+	var workerURL string
+	for _, worker := range lb.workers {
+		if worker.Name == workerName {
+			workerURL = worker.URL
+			break
+		}
+	}
+	lb.mu.RUnlock()
+
+	if workerURL == "" {
+		http.Error(w, "Worker not found", http.StatusNotFound)
+		return
+	}
+
+	// Proxy the request to the worker
+	client := &http.Client{Timeout: 5 * time.Second}
+	var proxyReq *http.Request
+	var err error
+
+	switch r.Method {
+	case http.MethodGet:
+		proxyReq, err = http.NewRequest(http.MethodGet, workerURL+"/config", nil)
+	case http.MethodPut, http.MethodPost:
+		proxyReq, err = http.NewRequest(r.Method, workerURL+"/config", r.Body)
+		proxyReq.Header.Set("Content-Type", "application/json")
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if err != nil {
+		http.Error(w, "Failed to create request", http.StatusInternalServerError)
+		return
+	}
+
+	resp, err := client.Do(proxyReq)
+	if err != nil {
+		http.Error(w, "Failed to reach worker", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	// Copy response headers and body
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err == nil {
+		result["worker"] = workerName
+		json.NewEncoder(w).Encode(result)
+	}
 }
 
 func handleWebSocket(w http.ResponseWriter, r *http.Request) {
@@ -530,12 +603,12 @@ func main() {
 		weight  int
 		maxLoad int
 	}{
-		{"WORKER_GO_1_URL", "go-worker-1", "#3B82F6", 5, 15},
-		{"WORKER_GO_2_URL", "go-worker-2", "#6366F1", 2, 8},
-		{"WORKER_RUST_1_URL", "rust-worker-1", "#F97316", 6, 20},
-		{"WORKER_RUST_2_URL", "rust-worker-2", "#EAB308", 1, 5},
-		{"WORKER_PYTHON_1_URL", "python-worker-1", "#10B981", 1, 6},
-		{"WORKER_PYTHON_2_URL", "python-worker-2", "#14B8A6", 3, 10},
+		{"WORKER_GO_1_URL", "go-worker-1", "#3B82F6", 5, 3},
+		{"WORKER_GO_2_URL", "go-worker-2", "#6366F1", 2, 3},
+		{"WORKER_RUST_1_URL", "rust-worker-1", "#F97316", 6, 3},
+		{"WORKER_RUST_2_URL", "rust-worker-2", "#EAB308", 1, 3},
+		{"WORKER_PYTHON_1_URL", "python-worker-1", "#10B981", 1, 3},
+		{"WORKER_PYTHON_2_URL", "python-worker-2", "#14B8A6", 3, 3},
 	}
 
 	for _, cfg := range workerConfigs {
@@ -565,9 +638,17 @@ func main() {
 	mux.HandleFunc("/task", handleTask)
 	mux.HandleFunc("/status", handleStatus)
 	mux.HandleFunc("/algorithm", handleAlgorithm)
-	mux.HandleFunc("/workers/", handleWorker)
 	mux.HandleFunc("/health", handleHealth)
 	mux.HandleFunc("/ws", handleWebSocket)
+	// Worker routes - more specific first
+	mux.HandleFunc("/workers/", func(w http.ResponseWriter, r *http.Request) {
+		// Route to config handler if path contains /config
+		if strings.Contains(r.URL.Path, "/config") {
+			handleWorkerConfig(w, r)
+		} else {
+			handleWorker(w, r)
+		}
+	})
 	mux.Handle("/metrics", promhttp.Handler())
 
 	port := os.Getenv("PORT")
