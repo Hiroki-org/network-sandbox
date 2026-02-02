@@ -397,6 +397,8 @@ func handleTask(w http.ResponseWriter, r *http.Request) {
 	lb.BroadcastStatus()
 }
 
+// handleStatus はロードバランサーの現在の状態をJSONで返すHTTPハンドラです。
+// GET以外のメソッドに対してはステータス405 (Method Not Allowed) を返します。
 func handleStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -408,6 +410,10 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 
 var availableAlgorithms = []string{"round-robin", "least-connections", "weighted", "random"}
 
+// handleAlgorithm はロードバランサのアルゴリズム設定エンドポイントを処理する。
+// GET リクエストでは現在のアルゴリズムと利用可能なアルゴリズム一覧を JSON で返す。
+// PUT または POST では `{ "algorithm": "<name>" }` を受け取り、許可されたアルゴリズムであれば設定を反映して同様の JSON を返し、設定変更後に接続中クライアントへ状態をブロードキャストする。
+// リクエストボディが無効またはアルゴリズム名が不正な場合は 400 を返し、許可されていない HTTP メソッドには 405 を返す。
 func handleAlgorithm(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -480,12 +486,17 @@ func handleWorker(w http.ResponseWriter, r *http.Request) {
 	lb.BroadcastStatus()
 }
 
+// handleHealth は HTTP レスポンスとして JSON `{"status":"healthy"}` を 200 OK で返します。
+// レスポンスの Content-Type は "application/json" に設定されます。
 func handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "healthy"})
 }
 
-// handleWorkerConfig proxies config requests to specific workers
+// handleWorkerConfigは /workers/{name}/config へのリクエストを対応するワーカーの /config エンドポイントへプロキシし、ワーカーの応答をクライアントへ返します。
+// サポートするメソッドは GET、PUT、POST で、PUT/POST の場合はリクエストボディをそのまま転送し Content-Type を application/json に設定します。
+// パスが不正な場合は 400、ワーカーが見つからない場合は 404、許可されていないメソッドは 405、ワーカーへ到達できない場合は 502 を返します。
+// 正常なワーカー応答（JSON）があれば、その JSON に "worker" フィールドを追加して同じステータスコードで返します。
 func handleWorkerConfig(w http.ResponseWriter, r *http.Request) {
 	// Extract worker name from path: /workers/{name}/config
 	path := strings.TrimPrefix(r.URL.Path, "/workers/")
@@ -550,6 +561,8 @@ func handleWorkerConfig(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleWebSocket は HTTP 接続を WebSocket にアップグレードし、クライアントを登録して状態を送信し、接続が切断されるまで受信を監視します。
+// クライアントが接続されると現在のロードバランサ状態を JSON で送信し、読み取りエラーが発生した時点でクライアントを登録解除して接続を閉じます。
 func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -589,6 +602,10 @@ func corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// main はロードバランサーを初期化し、ワーカー構成を環境変数から読み込んでバックグラウンド処理を開始し、HTTP サーバを起動してグレースフルシャットダウンを管理します.
+// 環境変数 LB_ALGORITHM でアルゴリズムを設定し、個々の WORKER_*_URL と任意の <WORKER_NAME>_WEIGHT に基づいてワーカーを追加します。
+// また、ヘルスチェックとステータスのブロードキャストをバックグラウンドで開始し、/task、/status、/algorithm、/health、/ws、/workers/*、/metrics の各ハンドラを登録してリクエストを処理します。
+// SIGINT/SIGTERM を受け取るとバックグラウンド処理を停止し、30秒のタイムアウトで HTTP サーバを順次停止します。
 func main() {
 	lb = NewLoadBalancer()
 
