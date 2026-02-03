@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"math/rand"
 	"net/http"
@@ -415,6 +416,8 @@ func handleTask(w http.ResponseWriter, r *http.Request) {
 	lb.BroadcastStatus()
 }
 
+// handleStatus はロードバランサーの現在の状態をJSONで返すHTTPハンドラです。
+// GET以外のメソッドに対してはステータス405 (Method Not Allowed) を返します。
 func handleStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -424,6 +427,21 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(lb.GetStatus())
 }
 
+var availableAlgorithms = []string{"round-robin", "least-connections", "weighted", "random"}
+
+// validAlgorithms は availableAlgorithms から生成されたバリデーション用の map
+var validAlgorithms = func() map[string]struct{} {
+	m := make(map[string]struct{}, len(availableAlgorithms))
+	for _, a := range availableAlgorithms {
+		m[a] = struct{}{}
+	}
+	return m
+}()
+
+// handleAlgorithm はロードバランサのアルゴリズム設定エンドポイントを処理する。
+// GET リクエストでは現在のアルゴリズムと利用可能なアルゴリズム一覧を JSON で返す。
+// PUT または POST では `{ "algorithm": "<name>" }` を受け取り、許可されたアルゴリズムであれば設定を反映して同様の JSON を返し、設定変更後に接続中クライアントへ状態をブロードキャストする。
+// リクエストボディが無効またはアルゴリズム名が不正な場合は 400 を返し、許可されていない HTTP メソッドには 405 を返す。
 func handleAlgorithm(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -431,7 +449,10 @@ func handleAlgorithm(w http.ResponseWriter, r *http.Request) {
 		algo := lb.algorithm
 		lb.mu.RUnlock()
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"algorithm": algo})
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"algorithm": algo,
+			"available": availableAlgorithms,
+		})
 
 	case http.MethodPut, http.MethodPost:
 		var req struct {
@@ -441,16 +462,16 @@ func handleAlgorithm(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Invalid request", http.StatusBadRequest)
 			return
 		}
-		validAlgos := map[string]bool{
-			"round-robin": true, "least-connections": true, "weighted": true, "random": true,
-		}
-		if !validAlgos[req.Algorithm] {
+		if _, ok := validAlgorithms[req.Algorithm]; !ok {
 			http.Error(w, "Invalid algorithm", http.StatusBadRequest)
 			return
 		}
 		lb.SetAlgorithm(req.Algorithm)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"algorithm": req.Algorithm})
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"algorithm": req.Algorithm,
+			"available": availableAlgorithms,
+		})
 		lb.BroadcastStatus()
 
 	default:
@@ -490,11 +511,101 @@ func handleWorker(w http.ResponseWriter, r *http.Request) {
 	lb.BroadcastStatus()
 }
 
+// handleHealth は HTTP レスポンスとして JSON `{"status":"healthy"}` を 200 OK で返します。
+// レスポンスの Content-Type は "application/json" に設定されます。
 func handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "healthy"})
 }
 
+// handleWorkerConfigは /workers/{name}/config へのリクエストを対応するワーカーの /config エンドポイントへプロキシし、ワーカーの応答をクライアントへ返します。
+// サポートするメソッドは GET、PUT、POST で、PUT/POST の場合はリクエストボディをそのまま転送し Content-Type を application/json に設定します。
+// パスが不正な場合は 400、ワーカーが見つからない場合は 404、許可されていないメソッドは 405、ワーカーへ到達できない場合は 502 を返します。
+// 正常なワーカー応答（JSON）があれば、その JSON に "worker" フィールドを追加して同じステータスコードで返します。
+func handleWorkerConfig(w http.ResponseWriter, r *http.Request) {
+	// Extract worker name from path: /workers/{name}/config
+	path := strings.TrimPrefix(r.URL.Path, "/workers/")
+	parts := strings.Split(path, "/")
+	if len(parts) < 2 || parts[1] != "config" {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+	workerName := parts[0]
+
+	// Find worker URL
+	lb.mu.RLock()
+	var workerURL string
+	for _, worker := range lb.workers {
+		if worker.Name == workerName {
+			workerURL = worker.URL
+			break
+		}
+	}
+	lb.mu.RUnlock()
+
+	if workerURL == "" {
+		http.Error(w, "Worker not found", http.StatusNotFound)
+		return
+	}
+
+	// Proxy the request to the worker
+	client := &http.Client{Timeout: 5 * time.Second}
+	var proxyReq *http.Request
+	var err error
+
+	switch r.Method {
+	case http.MethodGet:
+		proxyReq, err = http.NewRequestWithContext(r.Context(), http.MethodGet, workerURL+"/config", nil)
+	case http.MethodPut, http.MethodPost:
+		proxyReq, err = http.NewRequestWithContext(r.Context(), r.Method, workerURL+"/config", r.Body)
+		if proxyReq != nil {
+			proxyReq.Header.Set("Content-Type", "application/json")
+		}
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if err != nil {
+		http.Error(w, "Failed to create request", http.StatusInternalServerError)
+		return
+	}
+
+	resp, err := client.Do(proxyReq)
+	if err != nil {
+		http.Error(w, "Failed to reach worker", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	// Read response body
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		http.Error(w, "Failed to read worker response", http.StatusBadGateway)
+		return
+	}
+
+	// Try to decode as JSON and add worker field
+	var result map[string]interface{}
+	if err := json.Unmarshal(body, &result); err == nil {
+		result["worker"] = workerName
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(resp.StatusCode)
+		json.NewEncoder(w).Encode(result)
+	} else {
+		// If not JSON, copy raw response
+		if ct := resp.Header.Get("Content-Type"); ct != "" {
+			w.Header().Set("Content-Type", ct)
+		} else {
+			w.Header().Set("Content-Type", "application/octet-stream")
+		}
+		w.WriteHeader(resp.StatusCode)
+		w.Write(body)
+	}
+}
+
+// handleWebSocket は HTTP 接続を WebSocket にアップグレードし、クライアントを登録して状態を送信し、接続が切断されるまで受信を監視します。
+// クライアントが接続されると現在のロードバランサ状態を JSON で送信し、読み取りエラーが発生した時点でクライアントを登録解除して接続を閉じます。
 func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -534,6 +645,10 @@ func corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// main はロードバランサーを初期化し、ワーカー構成を環境変数から読み込んでバックグラウンド処理を開始し、HTTP サーバを起動してグレースフルシャットダウンを管理します.
+// 環境変数 LB_ALGORITHM でアルゴリズムを設定し、個々の WORKER_*_URL と任意の <WORKER_NAME>_WEIGHT に基づいてワーカーを追加します。
+// また、ヘルスチェックとステータスのブロードキャストをバックグラウンドで開始し、/task、/status、/algorithm、/health、/ws、/workers/*、/metrics の各ハンドラを登録してリクエストを処理します。
+// SIGINT/SIGTERM を受け取るとバックグラウンド処理を停止し、30秒のタイムアウトで HTTP サーバを順次停止します。
 func main() {
 	lb = NewLoadBalancer()
 
@@ -548,12 +663,12 @@ func main() {
 		weight  int
 		maxLoad int
 	}{
-		{"WORKER_GO_1_URL", "go-worker-1", "#3B82F6", 5, 15},
-		{"WORKER_GO_2_URL", "go-worker-2", "#6366F1", 2, 8},
-		{"WORKER_RUST_1_URL", "rust-worker-1", "#F97316", 6, 20},
-		{"WORKER_RUST_2_URL", "rust-worker-2", "#EAB308", 1, 5},
-		{"WORKER_PYTHON_1_URL", "python-worker-1", "#10B981", 1, 6},
-		{"WORKER_PYTHON_2_URL", "python-worker-2", "#14B8A6", 3, 10},
+		{"WORKER_GO_1_URL", "go-worker-1", "#3B82F6", 5, 3},
+		{"WORKER_GO_2_URL", "go-worker-2", "#6366F1", 2, 3},
+		{"WORKER_RUST_1_URL", "rust-worker-1", "#F97316", 6, 3},
+		{"WORKER_RUST_2_URL", "rust-worker-2", "#EAB308", 1, 3},
+		{"WORKER_PYTHON_1_URL", "python-worker-1", "#10B981", 1, 3},
+		{"WORKER_PYTHON_2_URL", "python-worker-2", "#14B8A6", 3, 3},
 	}
 
 	for _, cfg := range workerConfigs {
@@ -583,9 +698,19 @@ func main() {
 	mux.HandleFunc("/task", handleTask)
 	mux.HandleFunc("/status", handleStatus)
 	mux.HandleFunc("/algorithm", handleAlgorithm)
-	mux.HandleFunc("/workers/", handleWorker)
 	mux.HandleFunc("/health", handleHealth)
 	mux.HandleFunc("/ws", handleWebSocket)
+	// Worker routes - use segment matching for safety
+	mux.HandleFunc("/workers/", func(w http.ResponseWriter, r *http.Request) {
+		// Route based on path segments to avoid misrouting worker names containing "config"
+		path := strings.TrimPrefix(r.URL.Path, "/workers/")
+		parts := strings.Split(strings.TrimSuffix(path, "/"), "/")
+		if len(parts) == 2 && parts[1] == "config" {
+			handleWorkerConfig(w, r)
+		} else {
+			handleWorker(w, r)
+		}
+	})
 	mux.Handle("/metrics", promhttp.Handler())
 
 	port := os.Getenv("PORT")
