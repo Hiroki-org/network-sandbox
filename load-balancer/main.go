@@ -45,6 +45,8 @@ type LoadBalancer struct {
 	roundRobinIdx int
 	wsClients     map[*websocket.Conn]bool
 	wsClientsMu   sync.Mutex
+	availableBuf  []*Worker
+	circuitThreshold int
 }
 
 // Prometheus metrics
@@ -105,9 +107,11 @@ func init() {
 // NewLoadBalancer creates a new load balancer
 func NewLoadBalancer() *LoadBalancer {
 	return &LoadBalancer{
-		workers:   make([]*Worker, 0),
-		algorithm: "round-robin",
-		wsClients: make(map[*websocket.Conn]bool),
+		workers:          make([]*Worker, 0),
+		algorithm:        "round-robin",
+		wsClients:        make(map[*websocket.Conn]bool),
+		availableBuf:     make([]*Worker, 0),
+		circuitThreshold: 3,
 	}
 }
 
@@ -131,25 +135,56 @@ func (lb *LoadBalancer) SelectWorker() *Worker {
 	lb.mu.Lock()
 	defer lb.mu.Unlock()
 
+	lb.availableBuf = lb.availableBuf[:0]
+	for _, w := range lb.workers {
+		if w.Healthy && w.Enabled && !w.CircuitOpen {
+			lb.availableBuf = append(lb.availableBuf, w)
+		}
+	}
+	if len(lb.availableBuf) == 0 {
+		return nil
+	}
+
+	switch lb.algorithm {
+	case "least-connections":
+		return lb.leastConnections(lb.availableBuf)
+	case "weighted":
+		return lb.weighted(lb.availableBuf)
+	case "random":
+		return lb.availableBuf[rand.Intn(len(lb.availableBuf))]
+	default:
+		return lb.roundRobin(lb.availableBuf)
+	}
+}
+
+func (lb *LoadBalancer) getHealthyWorkers() []*Worker {
+	lb.mu.RLock()
+	defer lb.mu.RUnlock()
+
 	available := make([]*Worker, 0)
 	for _, w := range lb.workers {
 		if w.Healthy && w.Enabled && !w.CircuitOpen {
 			available = append(available, w)
 		}
 	}
-	if len(available) == 0 {
-		return nil
-	}
+	return available
+}
 
-	switch lb.algorithm {
-	case "least-connections":
-		return lb.leastConnections(available)
-	case "weighted":
-		return lb.weighted(available)
-	case "random":
-		return available[rand.Intn(len(available))]
-	default:
-		return lb.roundRobin(available)
+func (lb *LoadBalancer) recordSuccess(w *Worker) {
+	lb.mu.Lock()
+	defer lb.mu.Unlock()
+	w.ConsecFailures = 0
+	w.Healthy = true
+	w.CircuitOpen = false
+}
+
+func (lb *LoadBalancer) recordFailure(w *Worker) {
+	lb.mu.Lock()
+	defer lb.mu.Unlock()
+	w.ConsecFailures++
+	if w.ConsecFailures >= lb.circuitThreshold {
+		w.CircuitOpen = true
+		w.Healthy = false
 	}
 }
 
@@ -249,19 +284,10 @@ func (lb *LoadBalancer) checkWorker(w *Worker) {
 	client := &http.Client{Timeout: 2 * time.Second}
 	resp, err := client.Get(w.URL + "/health")
 
-	lb.mu.Lock()
-	defer lb.mu.Unlock()
-
 	if err != nil || resp.StatusCode != http.StatusOK {
-		w.ConsecFailures++
-		if w.ConsecFailures >= 3 {
-			w.CircuitOpen = true
-			w.Healthy = false
-		}
+		lb.recordFailure(w)
 	} else {
-		w.ConsecFailures = 0
-		w.Healthy = true
-		w.CircuitOpen = false
+		lb.recordSuccess(w)
 	}
 	if resp != nil {
 		resp.Body.Close()
@@ -366,19 +392,14 @@ func handleTask(w http.ResponseWriter, r *http.Request) {
 	if err != nil || resp.StatusCode >= 500 {
 		lb.mu.Lock()
 		worker.FailedRequests++
-		worker.ConsecFailures++
-		if worker.ConsecFailures >= 3 {
-			worker.CircuitOpen = true
-		}
 		lb.mu.Unlock()
+		lb.recordFailure(worker)
 		requestsTotal.WithLabelValues(worker.Name, "error").Inc()
 		http.Error(w, `{"error": "Worker failed"}`, http.StatusServiceUnavailable)
 		return
 	}
 
-	lb.mu.Lock()
-	worker.ConsecFailures = 0
-	lb.mu.Unlock()
+	lb.recordSuccess(worker)
 
 	requestsTotal.WithLabelValues(worker.Name, "success").Inc()
 
