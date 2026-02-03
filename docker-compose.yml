@@ -31,10 +31,10 @@ services:
       - PORT=8080
       - WORKER_NAME=go-worker-1
       - WORKER_COLOR=#3B82F6
-      - MAX_CONCURRENT_REQUESTS=15
-      - RESPONSE_DELAY_MS=50
+      - MAX_CONCURRENT_REQUESTS=3
+      - RESPONSE_DELAY_MS=500
       - FAILURE_RATE=0.02
-      - QUEUE_SIZE=80
+      - QUEUE_SIZE=3
       - INITIAL_WEIGHT=5
     networks:
       - sandbox-network
@@ -46,10 +46,10 @@ services:
       - PORT=8080
       - WORKER_NAME=go-worker-2
       - WORKER_COLOR=#6366F1
-      - MAX_CONCURRENT_REQUESTS=8
-      - RESPONSE_DELAY_MS=120
+      - MAX_CONCURRENT_REQUESTS=3
+      - RESPONSE_DELAY_MS=700
       - FAILURE_RATE=0.08
-      - QUEUE_SIZE=40
+      - QUEUE_SIZE=3
       - INITIAL_WEIGHT=2
     networks:
       - sandbox-network
@@ -62,10 +62,10 @@ services:
       - PORT=8080
       - WORKER_NAME=rust-worker-1
       - WORKER_COLOR=#F97316
-      - MAX_CONCURRENT_REQUESTS=20
-      - RESPONSE_DELAY_MS=40
+      - MAX_CONCURRENT_REQUESTS=3
+      - RESPONSE_DELAY_MS=600
       - FAILURE_RATE=0.01
-      - QUEUE_SIZE=100
+      - QUEUE_SIZE=3
       - INITIAL_WEIGHT=6
     networks:
       - sandbox-network
@@ -77,10 +77,10 @@ services:
       - PORT=8080
       - WORKER_NAME=rust-worker-2
       - WORKER_COLOR=#EAB308
-      - MAX_CONCURRENT_REQUESTS=5
-      - RESPONSE_DELAY_MS=200
+      - MAX_CONCURRENT_REQUESTS=3
+      - RESPONSE_DELAY_MS=800
       - FAILURE_RATE=0.15
-      - QUEUE_SIZE=25
+      - QUEUE_SIZE=3
       - INITIAL_WEIGHT=1
     networks:
       - sandbox-network
@@ -93,10 +93,10 @@ services:
       - PORT=8080
       - WORKER_NAME=python-worker-1
       - WORKER_COLOR=#10B981
-      - MAX_CONCURRENT_REQUESTS=6
-      - RESPONSE_DELAY_MS=250
+      - MAX_CONCURRENT_REQUESTS=3
+      - RESPONSE_DELAY_MS=900
       - FAILURE_RATE=0.20
-      - QUEUE_SIZE=30
+      - QUEUE_SIZE=3
       - INITIAL_WEIGHT=1
     networks:
       - sandbox-network
@@ -108,10 +108,10 @@ services:
       - PORT=8080
       - WORKER_NAME=python-worker-2
       - WORKER_COLOR=#14B8A6
-      - MAX_CONCURRENT_REQUESTS=10
-      - RESPONSE_DELAY_MS=80
+      - MAX_CONCURRENT_REQUESTS=3
+      - RESPONSE_DELAY_MS=1000
       - FAILURE_RATE=0.05
-      - QUEUE_SIZE=60
+      - QUEUE_SIZE=3
       - INITIAL_WEIGHT=3
     networks:
       - sandbox-network
