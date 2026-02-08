@@ -172,17 +172,19 @@ function App() {
 
     const fetchConfigs = async () => {
       const configs: Record<string, WorkerConfig> = {};
-      for (const worker of status.workers) {
-        try {
-          const response = await fetch(`${API_URL}/workers/${worker.name}/config`);
-          if (response.ok) {
-            const data = await response.json();
-            configs[worker.name] = data;
+      await Promise.all(
+        status.workers.map(async (worker) => {
+          try {
+            const response = await fetch(`${API_URL}/workers/${worker.name}/config`);
+            if (response.ok) {
+              const data = await response.json();
+              configs[worker.name] = data;
+            }
+          } catch (e) {
+            console.error(`Failed to fetch config for ${worker.name}:`, e);
           }
-        } catch (e) {
-          console.error(`Failed to fetch config for ${worker.name}:`, e);
-        }
-      }
+        })
+      );
       setWorkerConfigs(configs);
     };
 
