@@ -43,7 +43,8 @@ type LoadBalancer struct {
 	workers       []*Worker
 	algorithm     string
 	roundRobinIdx int
-	wsClients     map[*websocket.Conn]bool
+	wsClients     map[*websocket.Conn]*sync.Mutex
+	broadcastMu   sync.Mutex
 	wsClientsMu   sync.Mutex
 }
 
@@ -107,7 +108,7 @@ func NewLoadBalancer() *LoadBalancer {
 	return &LoadBalancer{
 		workers:   make([]*Worker, 0),
 		algorithm: "round-robin",
-		wsClients: make(map[*websocket.Conn]bool),
+		wsClients: make(map[*websocket.Conn]*sync.Mutex),
 	}
 }
 
@@ -295,22 +296,41 @@ func (lb *LoadBalancer) UpdateWorker(name string, enabled *bool, weight *int) bo
 
 // BroadcastStatus sends status to all WebSocket clients
 func (lb *LoadBalancer) BroadcastStatus() {
+	lb.broadcastMu.Lock()
+	defer lb.broadcastMu.Unlock()
+
+	type clientInfo struct {
+		conn *websocket.Conn
+		mu   *sync.Mutex
+	}
+
 	lb.wsClientsMu.Lock()
-	defer lb.wsClientsMu.Unlock()
+	clients := make([]clientInfo, 0, len(lb.wsClients))
+	for conn, mu := range lb.wsClients {
+		clients = append(clients, clientInfo{conn: conn, mu: mu})
+	}
+	lb.wsClientsMu.Unlock()
+
 	status := lb.GetStatus()
 	data, err := json.Marshal(status)
 	if err != nil {
 		log.Printf("Failed to marshal status for broadcast: %v", err)
 		return
 	}
-	for client := range lb.wsClients {
-		if err := client.WriteMessage(websocket.TextMessage, data); err != nil {
-			client.Close()
-			delete(lb.wsClients, client)
+
+	for _, client := range clients {
+		client.mu.Lock()
+		err := client.conn.WriteMessage(websocket.TextMessage, data)
+		client.mu.Unlock()
+
+		if err != nil {
+			lb.wsClientsMu.Lock()
+			delete(lb.wsClients, client.conn)
+			lb.wsClientsMu.Unlock()
+			client.conn.Close()
 		}
 	}
 }
-
 // StartBroadcast starts periodic status broadcasts
 func (lb *LoadBalancer) StartBroadcast(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
@@ -595,13 +615,17 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+		connMu := &sync.Mutex{}
+	connMu.Lock()
+
 	lb.wsClientsMu.Lock()
-	lb.wsClients[conn] = true
+	lb.wsClients[conn] = connMu
 	lb.wsClientsMu.Unlock()
 
 	status := lb.GetStatus()
 	data, _ := json.Marshal(status)
 	conn.WriteMessage(websocket.TextMessage, data)
+	connMu.Unlock()
 
 	for {
 		if _, _, err := conn.ReadMessage(); err != nil {
