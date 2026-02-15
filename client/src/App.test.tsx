@@ -48,6 +48,7 @@ describe('App Component', () => {
     jest.clearAllMocks();
     MockWebSocket.reset();
     mockFetch.mockReset();
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({}) });
   });
 
   afterEach(() => {
