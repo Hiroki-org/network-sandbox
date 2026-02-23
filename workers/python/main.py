@@ -3,7 +3,7 @@ import os
 import random
 import time
 from datetime import datetime, timezone
-from threading import Lock
+from asyncio import Lock
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Response
@@ -154,7 +154,7 @@ async def handle_task(task: TaskRequest):
     # Try to acquire queue slot with timeout (non-blocking)
     try:
         await asyncio.wait_for(queue_semaphore.acquire(), timeout=0.01)
-        with queue_depth_lock:
+        async with queue_depth_lock:
             queue_depth += 1
     except asyncio.TimeoutError:
         requests_total.labels(worker=WORKER_NAME, status="rejected").inc()
@@ -165,18 +165,18 @@ async def handle_task(task: TaskRequest):
 
     try:
         # Check concurrent request limit
-        with requests_lock:
+        async with requests_lock:
             active_requests += 1
             current = active_requests
             current_load.labels(worker=WORKER_NAME).set(current)
 
-        with config_lock:
+        async with config_lock:
             max_concurrent = config.max_concurrent_requests
             delay_ms = config.response_delay_ms
             failure_rate = config.failure_rate
 
         if current > max_concurrent:
-            with requests_lock:
+            async with requests_lock:
                 active_requests -= 1
                 current_load.labels(worker=WORKER_NAME).set(active_requests)
             requests_total.labels(worker=WORKER_NAME, status="overloaded").inc()
@@ -199,7 +199,7 @@ async def handle_task(task: TaskRequest):
         request_duration.labels(worker=WORKER_NAME).observe(processing_time_ms)
 
         # Cleanup active requests
-        with requests_lock:
+        async with requests_lock:
             active_requests -= 1
             current_load.labels(worker=WORKER_NAME).set(active_requests)
 
@@ -224,7 +224,7 @@ async def handle_task(task: TaskRequest):
 
     finally:
         queue_semaphore.release()
-        with queue_depth_lock:
+        async with queue_depth_lock:
             queue_depth -= 1
 
 
@@ -241,14 +241,14 @@ async def handle_health():
     Returns:
         HealthResponse: 現在のステータスを表す `status`、現在の同時処理数を示す `currentLoad`、およびキューの深さを示す `queueDepth` を含むオブジェクト。
     """
-    with config_lock:
+    async with config_lock:
         max_concurrent = config.max_concurrent_requests
         max_queue = config.queue_size
 
-    with requests_lock:
+    async with requests_lock:
         load = active_requests
 
-    with queue_depth_lock:
+    async with queue_depth_lock:
         depth = queue_depth
 
     load_ratio = load / max_concurrent if max_concurrent > 0 else 0
@@ -272,7 +272,7 @@ async def get_config():
     Returns:
         Configuration: 現在のランタイム設定オブジェクト
     """
-    with config_lock:
+    async with config_lock:
         return config
 
 
@@ -296,7 +296,7 @@ async def update_config(new_config: Configuration):
         HTTPException: queue_size変更時にアクティブなリクエストがある場合は400エラー
     """
     global config, queue_semaphore
-    with config_lock:
+    async with config_lock:
         if new_config.max_concurrent_requests > 0:
             config.max_concurrent_requests = new_config.max_concurrent_requests
         if new_config.response_delay_ms >= 0:
@@ -306,9 +306,9 @@ async def update_config(new_config: Configuration):
         
         # Handle queue_size change with semaphore synchronization
         if new_config.queue_size > 0 and new_config.queue_size != config.queue_size:
-            with requests_lock:
+            async with requests_lock:
                 current_active = active_requests
-            with queue_depth_lock:
+            async with queue_depth_lock:
                 current_depth = queue_depth
             
             if current_active > 0 or current_depth > 0:
