@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -28,13 +29,13 @@ type Worker struct {
 	Color          string `json:"color"`
 	Weight         int    `json:"weight"`
 	MaxLoad        int    `json:"maxLoad"`
-	Healthy        bool   `json:"healthy"`
-	CurrentLoad    int    `json:"currentLoad"`
+	Healthy        int32  `json:"healthy"`     // Atomic (0=false, 1=true)
+	CurrentLoad    int64  `json:"currentLoad"` // Atomic
 	Enabled        bool   `json:"enabled"`
-	TotalRequests  int64  `json:"totalRequests"`
-	FailedRequests int64  `json:"failedRequests"`
-	CircuitOpen    bool   `json:"circuitOpen"`
-	ConsecFailures int    `json:"consecFailures"`
+	TotalRequests  int64  `json:"totalRequests"`  // Atomic
+	FailedRequests int64  `json:"failedRequests"` // Atomic
+	CircuitOpen    int32  `json:"circuitOpen"`    // Atomic (0=false, 1=true)
+	ConsecFailures int32  `json:"consecFailures"` // Atomic
 }
 
 // LoadBalancer manages workers and distribution
@@ -42,7 +43,7 @@ type LoadBalancer struct {
 	mu            sync.RWMutex
 	workers       []*Worker
 	algorithm     string
-	roundRobinIdx int
+	roundRobinIdx uint64
 	wsClients     map[*websocket.Conn]bool
 	wsClientsMu   sync.Mutex
 }
@@ -121,19 +122,19 @@ func (lb *LoadBalancer) AddWorker(name, url, color string, weight, maxLoad int) 
 		Color:   color,
 		Weight:  weight,
 		MaxLoad: maxLoad,
-		Healthy: true,
+		Healthy: 1,
 		Enabled: true,
 	})
 }
 
 // SelectWorker selects a worker based on the current algorithm
 func (lb *LoadBalancer) SelectWorker() *Worker {
-	lb.mu.Lock()
-	defer lb.mu.Unlock()
+	lb.mu.RLock()
+	defer lb.mu.RUnlock()
 
-	available := make([]*Worker, 0)
+	available := make([]*Worker, 0, len(lb.workers))
 	for _, w := range lb.workers {
-		if w.Healthy && w.Enabled && !w.CircuitOpen {
+		if atomic.LoadInt32(&w.Healthy) == 1 && w.Enabled && atomic.LoadInt32(&w.CircuitOpen) == 0 {
 			available = append(available, w)
 		}
 	}
@@ -154,19 +155,22 @@ func (lb *LoadBalancer) SelectWorker() *Worker {
 }
 
 func (lb *LoadBalancer) roundRobin(workers []*Worker) *Worker {
-	w := workers[lb.roundRobinIdx%len(workers)]
-	lb.roundRobinIdx++
-	return w
+	idx := atomic.AddUint64(&lb.roundRobinIdx, 1)
+	return workers[idx%uint64(len(workers))]
 }
 
 func (lb *LoadBalancer) leastConnections(workers []*Worker) *Worker {
-	minLoad := workers[0]
+	minLoadWorker := workers[0]
+	minLoad := atomic.LoadInt64(&minLoadWorker.CurrentLoad)
+
 	for _, w := range workers[1:] {
-		if w.CurrentLoad < minLoad.CurrentLoad {
-			minLoad = w
+		load := atomic.LoadInt64(&w.CurrentLoad)
+		if load < minLoad {
+			minLoadWorker = w
+			minLoad = load
 		}
 	}
-	return minLoad
+	return minLoadWorker
 }
 
 func (lb *LoadBalancer) weighted(workers []*Worker) *Worker {
@@ -206,12 +210,13 @@ func (lb *LoadBalancer) GetStatus() map[string]interface{} {
 			"color":          w.Color,
 			"weight":         w.Weight,
 			"maxLoad":        w.MaxLoad,
-			"healthy":        w.Healthy,
-			"currentLoad":    w.CurrentLoad,
+			"healthy":        atomic.LoadInt32(&w.Healthy) == 1,
+			"currentLoad":    atomic.LoadInt64(&w.CurrentLoad),
 			"enabled":        w.Enabled,
-			"totalRequests":  w.TotalRequests,
-			"failedRequests": w.FailedRequests,
-			"circuitOpen":    w.CircuitOpen,
+			"totalRequests":  atomic.LoadInt64(&w.TotalRequests),
+			"failedRequests": atomic.LoadInt64(&w.FailedRequests),
+			"circuitOpen":    atomic.LoadInt32(&w.CircuitOpen) == 1,
+			"consecFailures": atomic.LoadInt32(&w.ConsecFailures),
 		}
 	}
 	return map[string]interface{}{
@@ -249,30 +254,27 @@ func (lb *LoadBalancer) checkWorker(w *Worker) {
 	client := &http.Client{Timeout: 2 * time.Second}
 	resp, err := client.Get(w.URL + "/health")
 
-	lb.mu.Lock()
-	defer lb.mu.Unlock()
-
 	if err != nil || resp.StatusCode != http.StatusOK {
-		w.ConsecFailures++
-		if w.ConsecFailures >= 3 {
-			w.CircuitOpen = true
-			w.Healthy = false
+		consec := atomic.AddInt32(&w.ConsecFailures, 1)
+		if consec >= 3 {
+			atomic.StoreInt32(&w.CircuitOpen, 1)
+			atomic.StoreInt32(&w.Healthy, 0)
 		}
 	} else {
-		w.ConsecFailures = 0
-		w.Healthy = true
-		w.CircuitOpen = false
+		atomic.StoreInt32(&w.ConsecFailures, 0)
+		atomic.StoreInt32(&w.Healthy, 1)
+		atomic.StoreInt32(&w.CircuitOpen, 0)
 	}
 	if resp != nil {
 		resp.Body.Close()
 	}
 
 	healthVal := 0.0
-	if w.Healthy {
+	if atomic.LoadInt32(&w.Healthy) == 1 {
 		healthVal = 1.0
 	}
 	workerHealth.WithLabelValues(w.Name).Set(healthVal)
-	workerActiveConnections.WithLabelValues(w.Name).Set(float64(w.CurrentLoad))
+	workerActiveConnections.WithLabelValues(w.Name).Set(float64(atomic.LoadInt64(&w.CurrentLoad)))
 }
 
 // UpdateWorker updates worker settings
@@ -345,10 +347,8 @@ func handleTask(w http.ResponseWriter, r *http.Request) {
 		taskReq = map[string]interface{}{"weight": 1.0}
 	}
 
-	lb.mu.Lock()
-	worker.CurrentLoad++
-	worker.TotalRequests++
-	lb.mu.Unlock()
+	atomic.AddInt64(&worker.CurrentLoad, 1)
+	atomic.AddInt64(&worker.TotalRequests, 1)
 
 	start := time.Now()
 
@@ -359,26 +359,20 @@ func handleTask(w http.ResponseWriter, r *http.Request) {
 	duration := float64(time.Since(start).Milliseconds())
 	requestDuration.WithLabelValues(worker.Name).Observe(duration)
 
-	lb.mu.Lock()
-	worker.CurrentLoad--
-	lb.mu.Unlock()
+	atomic.AddInt64(&worker.CurrentLoad, -1)
 
 	if err != nil || resp.StatusCode >= 500 {
-		lb.mu.Lock()
-		worker.FailedRequests++
-		worker.ConsecFailures++
-		if worker.ConsecFailures >= 3 {
-			worker.CircuitOpen = true
+		atomic.AddInt64(&worker.FailedRequests, 1)
+		consec := atomic.AddInt32(&worker.ConsecFailures, 1)
+		if consec >= 3 {
+			atomic.StoreInt32(&worker.CircuitOpen, 1)
 		}
-		lb.mu.Unlock()
 		requestsTotal.WithLabelValues(worker.Name, "error").Inc()
 		http.Error(w, `{"error": "Worker failed"}`, http.StatusServiceUnavailable)
 		return
 	}
 
-	lb.mu.Lock()
-	worker.ConsecFailures = 0
-	lb.mu.Unlock()
+	atomic.StoreInt32(&worker.ConsecFailures, 0)
 
 	requestsTotal.WithLabelValues(worker.Name, "success").Inc()
 
