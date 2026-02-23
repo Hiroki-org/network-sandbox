@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -29,12 +30,12 @@ type Worker struct {
 	Weight         int    `json:"weight"`
 	MaxLoad        int    `json:"maxLoad"`
 	Healthy        bool   `json:"healthy"`
-	CurrentLoad    int    `json:"currentLoad"`
+	CurrentLoad    int64  `json:"currentLoad"`
 	Enabled        bool   `json:"enabled"`
 	TotalRequests  int64  `json:"totalRequests"`
 	FailedRequests int64  `json:"failedRequests"`
 	CircuitOpen    bool   `json:"circuitOpen"`
-	ConsecFailures int    `json:"consecFailures"`
+	ConsecFailures int64  `json:"consecFailures"`
 }
 
 // LoadBalancer manages workers and distribution
@@ -42,9 +43,11 @@ type LoadBalancer struct {
 	mu            sync.RWMutex
 	workers       []*Worker
 	algorithm     string
-	roundRobinIdx int
+	roundRobinIdx uint64
 	wsClients     map[*websocket.Conn]bool
 	wsClientsMu   sync.Mutex
+	// Circuit breaker configuration
+	circuitThreshold int
 }
 
 // Prometheus metrics
@@ -105,9 +108,10 @@ func init() {
 // NewLoadBalancer creates a new load balancer
 func NewLoadBalancer() *LoadBalancer {
 	return &LoadBalancer{
-		workers:   make([]*Worker, 0),
-		algorithm: "round-robin",
-		wsClients: make(map[*websocket.Conn]bool),
+		workers:          make([]*Worker, 0),
+		algorithm:        "round-robin",
+		wsClients:        make(map[*websocket.Conn]bool),
+		circuitThreshold: 3,
 	}
 }
 
@@ -128,63 +132,112 @@ func (lb *LoadBalancer) AddWorker(name, url, color string, weight, maxLoad int) 
 
 // SelectWorker selects a worker based on the current algorithm
 func (lb *LoadBalancer) SelectWorker() *Worker {
-	lb.mu.Lock()
-	defer lb.mu.Unlock()
+	lb.mu.RLock()
+	defer lb.mu.RUnlock()
 
-	available := make([]*Worker, 0)
-	for _, w := range lb.workers {
-		if w.Healthy && w.Enabled && !w.CircuitOpen {
-			available = append(available, w)
-		}
-	}
-	if len(available) == 0 {
+	if len(lb.workers) == 0 {
 		return nil
 	}
 
 	switch lb.algorithm {
 	case "least-connections":
-		return lb.leastConnections(available)
+		return lb.leastConnections()
 	case "weighted":
-		return lb.weighted(available)
+		return lb.weighted()
 	case "random":
-		return available[rand.Intn(len(available))]
+		return lb.random()
 	default:
-		return lb.roundRobin(available)
+		return lb.roundRobin()
 	}
 }
 
-func (lb *LoadBalancer) roundRobin(workers []*Worker) *Worker {
-	w := workers[lb.roundRobinIdx%len(workers)]
-	lb.roundRobinIdx++
-	return w
-}
+func (lb *LoadBalancer) roundRobin() *Worker {
+	startIdx := atomic.AddUint64(&lb.roundRobinIdx, 1)
+	n := uint64(len(lb.workers))
 
-func (lb *LoadBalancer) leastConnections(workers []*Worker) *Worker {
-	minLoad := workers[0]
-	for _, w := range workers[1:] {
-		if w.CurrentLoad < minLoad.CurrentLoad {
-			minLoad = w
-		}
-	}
-	return minLoad
-}
-
-func (lb *LoadBalancer) weighted(workers []*Worker) *Worker {
-	totalWeight := 0
-	for _, w := range workers {
-		totalWeight += w.Weight
-	}
-	if totalWeight == 0 {
-		return workers[0]
-	}
-	r := rand.Intn(totalWeight)
-	for _, w := range workers {
-		r -= w.Weight
-		if r < 0 {
+	for i := uint64(0); i < n; i++ {
+		idx := (startIdx + i) % n
+		w := lb.workers[idx]
+		if w.Healthy && w.Enabled && !w.CircuitOpen {
 			return w
 		}
 	}
-	return workers[len(workers)-1]
+	return nil
+}
+
+func (lb *LoadBalancer) leastConnections() *Worker {
+	var selected *Worker
+	minLoad := int64(1<<63 - 1) // MaxInt64
+
+	for _, w := range lb.workers {
+		if !w.Healthy || !w.Enabled || w.CircuitOpen {
+			continue
+		}
+		load := atomic.LoadInt64(&w.CurrentLoad)
+		if load < minLoad {
+			minLoad = load
+			selected = w
+		}
+	}
+	return selected
+}
+
+func (lb *LoadBalancer) weighted() *Worker {
+	totalWeight := 0
+
+	// First pass: calculate total weight
+	for _, w := range lb.workers {
+		if w.Healthy && w.Enabled && !w.CircuitOpen {
+			totalWeight += w.Weight
+		}
+	}
+
+	if totalWeight == 0 {
+		// Fallback to first healthy one
+		for _, w := range lb.workers {
+			if w.Healthy && w.Enabled && !w.CircuitOpen {
+				return w
+			}
+		}
+		return nil
+	}
+
+	r := rand.Intn(totalWeight)
+	for _, w := range lb.workers {
+		if w.Healthy && w.Enabled && !w.CircuitOpen {
+			r -= w.Weight
+			if r < 0 {
+				return w
+			}
+		}
+	}
+
+	return nil
+}
+
+func (lb *LoadBalancer) random() *Worker {
+	count := 0
+	for _, w := range lb.workers {
+		if w.Healthy && w.Enabled && !w.CircuitOpen {
+			count++
+		}
+	}
+
+	if count == 0 {
+		return nil
+	}
+
+	r := rand.Intn(count)
+	current := 0
+	for _, w := range lb.workers {
+		if w.Healthy && w.Enabled && !w.CircuitOpen {
+			if current == r {
+				return w
+			}
+			current++
+		}
+	}
+	return nil
 }
 
 // SetAlgorithm changes the load balancing algorithm
@@ -207,10 +260,10 @@ func (lb *LoadBalancer) GetStatus() map[string]interface{} {
 			"weight":         w.Weight,
 			"maxLoad":        w.MaxLoad,
 			"healthy":        w.Healthy,
-			"currentLoad":    w.CurrentLoad,
+			"currentLoad":    atomic.LoadInt64(&w.CurrentLoad),
 			"enabled":        w.Enabled,
-			"totalRequests":  w.TotalRequests,
-			"failedRequests": w.FailedRequests,
+			"totalRequests":  atomic.LoadInt64(&w.TotalRequests),
+			"failedRequests": atomic.LoadInt64(&w.FailedRequests),
 			"circuitOpen":    w.CircuitOpen,
 		}
 	}
@@ -249,30 +302,40 @@ func (lb *LoadBalancer) checkWorker(w *Worker) {
 	client := &http.Client{Timeout: 2 * time.Second}
 	resp, err := client.Get(w.URL + "/health")
 
-	lb.mu.Lock()
-	defer lb.mu.Unlock()
-
-	if err != nil || resp.StatusCode != http.StatusOK {
-		w.ConsecFailures++
-		if w.ConsecFailures >= 3 {
-			w.CircuitOpen = true
-			w.Healthy = false
-		}
-	} else {
-		w.ConsecFailures = 0
-		w.Healthy = true
-		w.CircuitOpen = false
-	}
+	isHealthy := err == nil && resp != nil && resp.StatusCode == http.StatusOK
 	if resp != nil {
 		resp.Body.Close()
 	}
 
+	if !isHealthy {
+		failures := atomic.AddInt64(&w.ConsecFailures, 1)
+		if failures >= int64(lb.circuitThreshold) {
+			lb.mu.Lock()
+			w.CircuitOpen = true
+			w.Healthy = false
+			lb.mu.Unlock()
+		}
+	} else {
+		atomic.StoreInt64(&w.ConsecFailures, 0)
+
+		lb.mu.RLock()
+		needsUpdate := !w.Healthy || w.CircuitOpen
+		lb.mu.RUnlock()
+
+		if needsUpdate {
+			lb.mu.Lock()
+			w.Healthy = true
+			w.CircuitOpen = false
+			lb.mu.Unlock()
+		}
+	}
+
 	healthVal := 0.0
-	if w.Healthy {
+	if isHealthy {
 		healthVal = 1.0
 	}
 	workerHealth.WithLabelValues(w.Name).Set(healthVal)
-	workerActiveConnections.WithLabelValues(w.Name).Set(float64(w.CurrentLoad))
+	workerActiveConnections.WithLabelValues(w.Name).Set(float64(atomic.LoadInt64(&w.CurrentLoad)))
 }
 
 // UpdateWorker updates worker settings
@@ -297,7 +360,9 @@ func (lb *LoadBalancer) UpdateWorker(name string, enabled *bool, weight *int) bo
 func (lb *LoadBalancer) BroadcastStatus() {
 	lb.wsClientsMu.Lock()
 	defer lb.wsClientsMu.Unlock()
+
 	status := lb.GetStatus()
+
 	data, err := json.Marshal(status)
 	if err != nil {
 		log.Printf("Failed to marshal status for broadcast: %v", err)
@@ -345,10 +410,8 @@ func handleTask(w http.ResponseWriter, r *http.Request) {
 		taskReq = map[string]interface{}{"weight": 1.0}
 	}
 
-	lb.mu.Lock()
-	worker.CurrentLoad++
-	worker.TotalRequests++
-	lb.mu.Unlock()
+	atomic.AddInt64(&worker.CurrentLoad, 1)
+	atomic.AddInt64(&worker.TotalRequests, 1)
 
 	start := time.Now()
 
@@ -359,26 +422,24 @@ func handleTask(w http.ResponseWriter, r *http.Request) {
 	duration := float64(time.Since(start).Milliseconds())
 	requestDuration.WithLabelValues(worker.Name).Observe(duration)
 
-	lb.mu.Lock()
-	worker.CurrentLoad--
-	lb.mu.Unlock()
+	atomic.AddInt64(&worker.CurrentLoad, -1)
 
 	if err != nil || resp.StatusCode >= 500 {
-		lb.mu.Lock()
-		worker.FailedRequests++
-		worker.ConsecFailures++
-		if worker.ConsecFailures >= 3 {
+		atomic.AddInt64(&worker.FailedRequests, 1)
+		failures := atomic.AddInt64(&worker.ConsecFailures, 1)
+
+		if failures >= int64(lb.circuitThreshold) {
+			lb.mu.Lock()
 			worker.CircuitOpen = true
+			lb.mu.Unlock()
 		}
-		lb.mu.Unlock()
+
 		requestsTotal.WithLabelValues(worker.Name, "error").Inc()
 		http.Error(w, `{"error": "Worker failed"}`, http.StatusServiceUnavailable)
 		return
 	}
 
-	lb.mu.Lock()
-	worker.ConsecFailures = 0
-	lb.mu.Unlock()
+	atomic.StoreInt64(&worker.ConsecFailures, 0)
 
 	requestsTotal.WithLabelValues(worker.Name, "success").Inc()
 
@@ -398,8 +459,6 @@ func handleTask(w http.ResponseWriter, r *http.Request) {
 	lb.BroadcastStatus()
 }
 
-// handleStatus はロードバランサーの現在の状態をJSONで返すHTTPハンドラです。
-// GET以外のメソッドに対してはステータス405 (Method Not Allowed) を返します。
 func handleStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -411,7 +470,6 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 
 var availableAlgorithms = []string{"round-robin", "least-connections", "weighted", "random"}
 
-// validAlgorithms は availableAlgorithms から生成されたバリデーション用の map
 var validAlgorithms = func() map[string]struct{} {
 	m := make(map[string]struct{}, len(availableAlgorithms))
 	for _, a := range availableAlgorithms {
@@ -420,10 +478,6 @@ var validAlgorithms = func() map[string]struct{} {
 	return m
 }()
 
-// handleAlgorithm はロードバランサのアルゴリズム設定エンドポイントを処理する。
-// GET リクエストでは現在のアルゴリズムと利用可能なアルゴリズム一覧を JSON で返す。
-// PUT または POST では `{ "algorithm": "<name>" }` を受け取り、許可されたアルゴリズムであれば設定を反映して同様の JSON を返し、設定変更後に接続中クライアントへ状態をブロードキャストする。
-// リクエストボディが無効またはアルゴリズム名が不正な場合は 400 を返し、許可されていない HTTP メソッドには 405 を返す。
 func handleAlgorithm(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -493,19 +547,12 @@ func handleWorker(w http.ResponseWriter, r *http.Request) {
 	lb.BroadcastStatus()
 }
 
-// handleHealth は HTTP レスポンスとして JSON `{"status":"healthy"}` を 200 OK で返します。
-// レスポンスの Content-Type は "application/json" に設定されます。
 func handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "healthy"})
 }
 
-// handleWorkerConfigは /workers/{name}/config へのリクエストを対応するワーカーの /config エンドポイントへプロキシし、ワーカーの応答をクライアントへ返します。
-// サポートするメソッドは GET、PUT、POST で、PUT/POST の場合はリクエストボディをそのまま転送し Content-Type を application/json に設定します。
-// パスが不正な場合は 400、ワーカーが見つからない場合は 404、許可されていないメソッドは 405、ワーカーへ到達できない場合は 502 を返します。
-// 正常なワーカー応答（JSON）があれば、その JSON に "worker" フィールドを追加して同じステータスコードで返します。
 func handleWorkerConfig(w http.ResponseWriter, r *http.Request) {
-	// Extract worker name from path: /workers/{name}/config
 	path := strings.TrimPrefix(r.URL.Path, "/workers/")
 	parts := strings.Split(path, "/")
 	if len(parts) < 2 || parts[1] != "config" {
@@ -514,7 +561,6 @@ func handleWorkerConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	workerName := parts[0]
 
-	// Find worker URL
 	lb.mu.RLock()
 	var workerURL string
 	for _, worker := range lb.workers {
@@ -530,7 +576,6 @@ func handleWorkerConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Proxy the request to the worker
 	client := &http.Client{Timeout: 5 * time.Second}
 	var proxyReq *http.Request
 	var err error
@@ -560,14 +605,12 @@ func handleWorkerConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	// Read response body
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		http.Error(w, "Failed to read worker response", http.StatusBadGateway)
 		return
 	}
 
-	// Try to decode as JSON and add worker field
 	var result map[string]interface{}
 	if err := json.Unmarshal(body, &result); err == nil {
 		result["worker"] = workerName
@@ -575,7 +618,6 @@ func handleWorkerConfig(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(resp.StatusCode)
 		json.NewEncoder(w).Encode(result)
 	} else {
-		// If not JSON, copy raw response
 		if ct := resp.Header.Get("Content-Type"); ct != "" {
 			w.Header().Set("Content-Type", ct)
 		} else {
@@ -586,8 +628,6 @@ func handleWorkerConfig(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleWebSocket は HTTP 接続を WebSocket にアップグレードし、クライアントを登録して状態を送信し、接続が切断されるまで受信を監視します。
-// クライアントが接続されると現在のロードバランサ状態を JSON で送信し、読み取りエラーが発生した時点でクライアントを登録解除して接続を閉じます。
 func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -627,10 +667,6 @@ func corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// main はロードバランサーを初期化し、ワーカー構成を環境変数から読み込んでバックグラウンド処理を開始し、HTTP サーバを起動してグレースフルシャットダウンを管理します.
-// 環境変数 LB_ALGORITHM でアルゴリズムを設定し、個々の WORKER_*_URL と任意の <WORKER_NAME>_WEIGHT に基づいてワーカーを追加します。
-// また、ヘルスチェックとステータスのブロードキャストをバックグラウンドで開始し、/task、/status、/algorithm、/health、/ws、/workers/*、/metrics の各ハンドラを登録してリクエストを処理します。
-// SIGINT/SIGTERM を受け取るとバックグラウンド処理を停止し、30秒のタイムアウトで HTTP サーバを順次停止します。
 func main() {
 	lb = NewLoadBalancer()
 
@@ -655,7 +691,6 @@ func main() {
 
 	for _, cfg := range workerConfigs {
 		if url := os.Getenv(cfg.envVar); url != "" {
-			// Check for weight override from environment
 			weightEnvKey := strings.ToUpper(strings.ReplaceAll(cfg.name, "-", "_")) + "_WEIGHT"
 			weight := cfg.weight
 			if wStr := os.Getenv(weightEnvKey); wStr != "" {
@@ -668,11 +703,9 @@ func main() {
 		}
 	}
 
-	// Create cancellable context for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Start background goroutines with cancellable context
 	go lb.HealthCheck(ctx, 5*time.Second)
 	go lb.StartBroadcast(ctx, 1*time.Second)
 
@@ -682,9 +715,7 @@ func main() {
 	mux.HandleFunc("/algorithm", handleAlgorithm)
 	mux.HandleFunc("/health", handleHealth)
 	mux.HandleFunc("/ws", handleWebSocket)
-	// Worker routes - use segment matching for safety
 	mux.HandleFunc("/workers/", func(w http.ResponseWriter, r *http.Request) {
-		// Route based on path segments to avoid misrouting worker names containing "config"
 		path := strings.TrimPrefix(r.URL.Path, "/workers/")
 		parts := strings.Split(strings.TrimSuffix(path, "/"), "/")
 		if len(parts) == 2 && parts[1] == "config" {
@@ -707,13 +738,12 @@ func main() {
 		Handler: handler,
 	}
 
-	// Handle shutdown signals
 	go func() {
 		sigChan := make(chan os.Signal, 1)
 		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 		<-sigChan
 		log.Println("Received shutdown signal, stopping...")
-		cancel() // Stop HealthCheck and StartBroadcast goroutines
+		cancel()
 
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer shutdownCancel()
