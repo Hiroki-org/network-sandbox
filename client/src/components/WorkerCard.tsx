@@ -14,7 +14,7 @@ interface WorkerCardProps {
 const getStatusColor = (worker: Worker) => {
   if (worker.circuitOpen) return "bg-red-500";
   if (!worker.healthy) return "bg-yellow-500";
-  const loadRatio = worker.currentLoad / worker.maxLoad;
+  const loadRatio = worker.currentLoad / (worker.maxLoad || 1);
   if (loadRatio >= 0.9) return "bg-red-500";
   if (loadRatio >= 0.7) return "bg-yellow-500";
   return "bg-green-500";
@@ -119,6 +119,7 @@ const WorkerCard: React.FC<WorkerCardProps> = ({
 
         {/* Config Panel Toggle */}
         <button
+          type="button"
           onClick={() => onToggleExpand(worker.name)}
           className="w-full text-sm text-slate-400 hover:text-white py-1 flex items-center justify-center gap-1"
         >

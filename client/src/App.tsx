@@ -126,26 +126,29 @@ function App() {
   );
 
   useEffect(() => {
-    if (!status?.workers) return;
+    if (!workerNames) return;
 
     const fetchConfigs = async () => {
       const configs: Record<string, WorkerConfig> = {};
-      for (const worker of status.workers) {
-        try {
-          const response = await fetch(`${API_URL}/workers/${worker.name}/config`);
-          if (response.ok) {
-            const data = await response.json();
-            configs[worker.name] = data;
+      const names = workerNames.split(",");
+      await Promise.all(
+        names.map(async (name) => {
+          try {
+            const response = await fetch(`${API_URL}/workers/${name}/config`);
+            if (response.ok) {
+              const data = await response.json();
+              configs[name] = data;
+            }
+          } catch (e) {
+            console.error(`Failed to fetch config for ${name}:`, e);
           }
-        } catch (e) {
-          console.error(`Failed to fetch config for ${worker.name}:`, e);
-        }
-      }
+        })
+      );
       setWorkerConfigs(configs);
     };
 
     fetchConfigs();
-  }, [workerNames, status?.workers]);
+  }, [workerNames]);
 
   const sendTask = useCallback(async () => {
     const taskId = `task-${++taskIdRef.current}`;
