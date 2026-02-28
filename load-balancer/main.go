@@ -615,7 +615,7 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-		connMu := &sync.Mutex{}
+	connMu := &sync.Mutex{}
 	connMu.Lock()
 
 	lb.wsClientsMu.Lock()
@@ -624,7 +624,14 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	status := lb.GetStatus()
 	data, _ := json.Marshal(status)
-	conn.WriteMessage(websocket.TextMessage, data)
+	if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
+		connMu.Unlock()
+		lb.wsClientsMu.Lock()
+		delete(lb.wsClients, conn)
+		lb.wsClientsMu.Unlock()
+		conn.Close()
+		return
+	}
 	connMu.Unlock()
 
 	for {
