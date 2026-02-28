@@ -8,8 +8,8 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
-	"sort"
 	"os/signal"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -198,10 +198,7 @@ func (lb *LoadBalancer) weighted(workers []*Worker) *Worker {
 	idx := sort.Search(len(lb.cumulativeWeights), func(i int) bool {
 		return lb.cumulativeWeights[i] > r
 	})
-	if idx < len(workers) {
-		return workers[idx]
-	}
-	return workers[len(workers)-1]
+	return workers[idx]
 }
 
 // SetAlgorithm changes the load balancing algorithm
