@@ -118,9 +118,15 @@ function App() {
   const [requestRate, setRequestRate] = useState(2); // Changed from 10 to 2 RPS
   const [taskWeight, setTaskWeight] = useState(1.0);
   const [connected, setConnected] = useState(false);
-  const [workerConfigs, setWorkerConfigs] = useState<Record<string, WorkerConfig>>({});
-  const [workerConfigDrafts, setWorkerConfigDrafts] = useState<Record<string, WorkerConfig>>({});
-  const [workerWeights, setWorkerWeights] = useState<Record<string, number>>({});
+  const [workerConfigs, setWorkerConfigs] = useState<
+    Record<string, WorkerConfig>
+  >({});
+  const [workerConfigDrafts, setWorkerConfigDrafts] = useState<
+    Record<string, WorkerConfig>
+  >({});
+  const [workerWeights, setWorkerWeights] = useState<Record<string, number>>(
+    {},
+  );
   const [ranges, setRanges] = useState<UIConfigRanges>(defaultRanges);
   const [expandedWorker, setExpandedWorker] = useState<string | null>(null);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -201,8 +207,12 @@ function App() {
           ...prev,
           requests_per_second: {
             ...prev.requests_per_second,
-            min: Number(data?.requests_per_second?.min ?? prev.requests_per_second.min),
-            max: Number(data?.requests_per_second?.max ?? prev.requests_per_second.max),
+            min: Number(
+              data?.requests_per_second?.min ?? prev.requests_per_second.min,
+            ),
+            max: Number(
+              data?.requests_per_second?.max ?? prev.requests_per_second.max,
+            ),
           },
           task_weight: {
             ...prev.task_weight,
@@ -211,8 +221,12 @@ function App() {
           },
           response_delay_ms: {
             ...prev.response_delay_ms,
-            min: Number(data?.response_delay_ms?.min ?? prev.response_delay_ms.min),
-            max: Number(data?.response_delay_ms?.max ?? prev.response_delay_ms.max),
+            min: Number(
+              data?.response_delay_ms?.min ?? prev.response_delay_ms.min,
+            ),
+            max: Number(
+              data?.response_delay_ms?.max ?? prev.response_delay_ms.max,
+            ),
           },
           failure_rate: {
             ...prev.failure_rate,
@@ -221,8 +235,14 @@ function App() {
           },
           max_concurrent_requests: {
             ...prev.max_concurrent_requests,
-            min: Number(data?.max_concurrent_requests?.min ?? prev.max_concurrent_requests.min),
-            max: Number(data?.max_concurrent_requests?.max ?? prev.max_concurrent_requests.max),
+            min: Number(
+              data?.max_concurrent_requests?.min ??
+                prev.max_concurrent_requests.min,
+            ),
+            max: Number(
+              data?.max_concurrent_requests?.max ??
+                prev.max_concurrent_requests.max,
+            ),
           },
         }));
       } catch (e) {
@@ -236,7 +256,7 @@ function App() {
   // Fetch worker configs when status changes
   const workerNames = useMemo(
     () => status?.workers?.map((w) => w.name).join(",") ?? "",
-    [status?.workers]
+    [status?.workers],
   );
 
   useEffect(() => {
@@ -253,13 +273,15 @@ function App() {
     const fetchConfigs = async () => {
       const results = await Promise.allSettled(
         status.workers.map(async (worker) => {
-          const response = await fetch(apiUrl(`/api/workers/${worker.name}/config`));
+          const response = await fetch(
+            apiUrl(`/api/workers/${worker.name}/config`),
+          );
           if (!response.ok) {
             throw new Error(`status ${response.status}`);
           }
           const data = await response.json();
           return { name: worker.name, data };
-        })
+        }),
       );
 
       const configs: Record<string, WorkerConfig> = {};
@@ -402,13 +424,19 @@ function App() {
     }
   };
 
-  const updateWorkerConfig = async (workerName: string, config: Partial<WorkerConfig>) => {
+  const updateWorkerConfig = async (
+    workerName: string,
+    config: Partial<WorkerConfig>,
+  ) => {
     try {
-      const response = await fetch(apiUrl(`/api/workers/${workerName}/config`), {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(config),
-      });
+      const response = await fetch(
+        apiUrl(`/api/workers/${workerName}/config`),
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(config),
+        },
+      );
       if (response.ok) {
         const updatedConfig = await response.json();
         setWorkerConfigs((prev) => ({
@@ -440,9 +468,9 @@ function App() {
     const avgResponseTime =
       tasks.length > 0
         ? Math.round(
-          tasks.reduce((sum, t) => sum + t.processingTimeMs, 0) /
-          tasks.length,
-        )
+            tasks.reduce((sum, t) => sum + t.processingTimeMs, 0) /
+              tasks.length,
+          )
         : 0;
     return { successCount, failureCount, avgResponseTime };
   }, [tasks]);
@@ -451,7 +479,12 @@ function App() {
 
   const formatTimestamp = (timestamp: string) => {
     const date = new Date(timestamp);
-    return date.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 1 });
+    return date.toLocaleTimeString("ja-JP", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      fractionalSecondDigits: 1,
+    });
   };
 
   const handleWorkerWeightChange = (workerName: string, value: number) => {
@@ -474,7 +507,9 @@ function App() {
         [key]: value,
       },
     }));
-    debouncedUpdateWorkerConfig(workerName, { [key]: value } as Partial<WorkerConfig>);
+    debouncedUpdateWorkerConfig(workerName, {
+      [key]: value,
+    } as Partial<WorkerConfig>);
   };
 
   return (
@@ -488,8 +523,9 @@ function App() {
           </p>
           <div className="flex items-center gap-2 mt-2">
             <span
-              className={`w-3 h-3 rounded-full ${connected ? "bg-green-500" : "bg-red-500"
-                }`}
+              className={`w-3 h-3 rounded-full ${
+                connected ? "bg-green-500" : "bg-red-500"
+              }`}
             />
             <span className="text-sm text-slate-400">
               {connected ? "接続中" : "接続待ち..."}
@@ -505,7 +541,10 @@ function App() {
               <h2 className="text-xl font-semibold mb-4">負荷生成</h2>
               <div className="space-y-4">
                 <div>
-                  <label htmlFor="request-rate-slider" className="block text-sm text-slate-400 mb-2">
+                  <label
+                    htmlFor="request-rate-slider"
+                    className="block text-sm text-slate-400 mb-2"
+                  >
                     リクエストレート: {requestRate}/秒
                   </label>
                   <input
@@ -520,7 +559,10 @@ function App() {
                   />
                 </div>
                 <div>
-                  <label htmlFor="task-weight-slider" className="block text-sm text-slate-400 mb-2">
+                  <label
+                    htmlFor="task-weight-slider"
+                    className="block text-sm text-slate-400 mb-2"
+                  >
                     タスク重み: {taskWeight.toFixed(1)}x
                   </label>
                   <input
@@ -537,10 +579,11 @@ function App() {
                 <button
                   type="button"
                   onClick={() => setIsRunning(!isRunning)}
-                  className={`w-full py-3 px-4 rounded-lg font-semibold transition ${isRunning
-                    ? "bg-red-600 hover:bg-red-700"
-                    : "bg-blue-600 hover:bg-blue-700"
-                    }`}
+                  className={`w-full py-3 px-4 rounded-lg font-semibold transition ${
+                    isRunning
+                      ? "bg-red-600 hover:bg-red-700"
+                      : "bg-blue-600 hover:bg-blue-700"
+                  }`}
                 >
                   {isRunning ? "停止" : "開始"}
                 </button>
@@ -564,10 +607,11 @@ function App() {
                     type="button"
                     key={algo.id}
                     onClick={() => changeAlgorithm(algo.id)}
-                    className={`w-full text-left px-4 py-3 rounded-lg transition ${status?.algorithm === algo.id
-                      ? "bg-blue-600"
-                      : "bg-slate-700 hover:bg-slate-600"
-                      }`}
+                    className={`w-full text-left px-4 py-3 rounded-lg transition ${
+                      status?.algorithm === algo.id
+                        ? "bg-blue-600"
+                        : "bg-slate-700 hover:bg-slate-600"
+                    }`}
                   >
                     <div className="font-medium">{algo.name}</div>
                     <div className="text-sm text-slate-400">{algo.desc}</div>
@@ -646,36 +690,46 @@ function App() {
                             <span className="font-mono">
                               {worker.currentLoad}/{worker.maxLoad}{" "}
                               <span className="text-xs">
-                                ({Math.round((worker.currentLoad / (worker.maxLoad || 1)) * 100)}%)
+                                (
+                                {Math.round(
+                                  (worker.currentLoad / (worker.maxLoad || 1)) *
+                                    100,
+                                )}
+                                %)
                               </span>
                             </span>
                           </div>
                           {/* Segmented load bar */}
                           <div className="flex gap-0.5 h-3">
-                            {Array.from({ length: worker.maxLoad || 5 }).map((_, idx) => {
-                              const isActive = idx < worker.currentLoad;
-                              const loadPercent = worker.currentLoad / (worker.maxLoad || 1);
-                              let barColor = worker.color;
-                              if (isActive) {
-                                if (loadPercent >= 0.9) {
-                                  barColor = "#ef4444"; // red
-                                } else if (loadPercent >= 0.7) {
-                                  barColor = "#f59e0b"; // amber
-                                } else if (loadPercent >= 0.5) {
-                                  barColor = "#eab308"; // yellow
+                            {Array.from({ length: worker.maxLoad || 5 }).map(
+                              (_, idx) => {
+                                const isActive = idx < worker.currentLoad;
+                                const loadPercent =
+                                  worker.currentLoad / (worker.maxLoad || 1);
+                                let barColor = worker.color;
+                                if (isActive) {
+                                  if (loadPercent >= 0.9) {
+                                    barColor = "#ef4444"; // red
+                                  } else if (loadPercent >= 0.7) {
+                                    barColor = "#f59e0b"; // amber
+                                  } else if (loadPercent >= 0.5) {
+                                    barColor = "#eab308"; // yellow
+                                  }
                                 }
-                              }
-                              return (
-                                <div
-                                  key={idx}
-                                  className="flex-1 rounded-sm transition-all duration-300"
-                                  style={{
-                                    backgroundColor: isActive ? barColor : "#475569",
-                                    opacity: isActive ? 1 : 0.3,
-                                  }}
-                                />
-                              );
-                            })}
+                                return (
+                                  <div
+                                    key={idx}
+                                    className="flex-1 rounded-sm transition-all duration-300"
+                                    style={{
+                                      backgroundColor: isActive
+                                        ? barColor
+                                        : "#475569",
+                                      opacity: isActive ? 1 : 0.3,
+                                    }}
+                                  />
+                                );
+                              },
+                            )}
                           </div>
                           {/* Capacity indicator */}
                           <div className="flex justify-between text-xs text-slate-500 mt-1">
@@ -689,7 +743,10 @@ function App() {
                         </div>
                         <div className="flex justify-between items-center text-sm">
                           <span className="text-slate-400">重み</span>
-                          <label htmlFor={`worker-weight-${worker.name}`} className="sr-only">
+                          <label
+                            htmlFor={`worker-weight-${worker.name}`}
+                            className="sr-only"
+                          >
                             {worker.name} の重み
                           </label>
                           <input
@@ -712,18 +769,26 @@ function App() {
                         {/* Config Panel Toggle */}
                         <button
                           type="button"
-                          onClick={() => setExpandedWorker(isExpanded ? null : worker.name)}
+                          onClick={() =>
+                            setExpandedWorker(isExpanded ? null : worker.name)
+                          }
                           className="w-full text-sm text-slate-400 hover:text-white py-1 flex items-center justify-center gap-1"
                         >
-                          <span>{isExpanded ? "▲ 設定を閉じる" : "▼ 設定を開く"}</span>
+                          <span>
+                            {isExpanded ? "▲ 設定を閉じる" : "▼ 設定を開く"}
+                          </span>
                         </button>
 
                         {/* Expanded Config Panel */}
                         {isExpanded && draftConfig && (
                           <div className="mt-3 pt-3 border-t border-slate-600 space-y-3">
                             <div>
-                              <label htmlFor={`worker-max-concurrent-${worker.name}`} className="block text-xs text-slate-400 mb-1">
-                                同時リクエスト数: {draftConfig.max_concurrent_requests}
+                              <label
+                                htmlFor={`worker-max-concurrent-${worker.name}`}
+                                className="block text-xs text-slate-400 mb-1"
+                              >
+                                同時リクエスト数:{" "}
+                                {draftConfig.max_concurrent_requests}
                               </label>
                               <input
                                 id={`worker-max-concurrent-${worker.name}`}
@@ -743,7 +808,10 @@ function App() {
                               />
                             </div>
                             <div>
-                              <label htmlFor={`worker-response-delay-${worker.name}`} className="block text-xs text-slate-400 mb-1">
+                              <label
+                                htmlFor={`worker-response-delay-${worker.name}`}
+                                className="block text-xs text-slate-400 mb-1"
+                              >
                                 応答遅延: {draftConfig.response_delay_ms}ms
                               </label>
                               <input
@@ -764,8 +832,12 @@ function App() {
                               />
                             </div>
                             <div>
-                              <label htmlFor={`worker-failure-rate-${worker.name}`} className="block text-xs text-slate-400 mb-1">
-                                失敗率: {(draftConfig.failure_rate * 100).toFixed(0)}%
+                              <label
+                                htmlFor={`worker-failure-rate-${worker.name}`}
+                                className="block text-xs text-slate-400 mb-1"
+                              >
+                                失敗率:{" "}
+                                {(draftConfig.failure_rate * 100).toFixed(0)}%
                               </label>
                               <input
                                 id={`worker-failure-rate-${worker.name}`}
@@ -773,7 +845,9 @@ function App() {
                                 min={ranges.failure_rate.min}
                                 max={ranges.failure_rate.max}
                                 step={ranges.failure_rate.step}
-                                value={Math.round(draftConfig.failure_rate * 100)}
+                                value={Math.round(
+                                  draftConfig.failure_rate * 100,
+                                )}
                                 onChange={(e) =>
                                   handleWorkerConfigChange(
                                     worker.name,
@@ -785,7 +859,10 @@ function App() {
                               />
                             </div>
                             <div>
-                              <label htmlFor={`worker-queue-size-${worker.name}`} className="block text-xs text-slate-400 mb-1">
+                              <label
+                                htmlFor={`worker-queue-size-${worker.name}`}
+                                className="block text-xs text-slate-400 mb-1"
+                              >
                                 キューサイズ: {draftConfig.queue_size}
                               </label>
                               <input
@@ -829,16 +906,20 @@ function App() {
                 <h2 className="text-xl font-semibold">リアルタイムログ</h2>
                 <div className="flex items-center gap-4 text-xs">
                   <span className="flex items-center gap-1">
-                    <span className="w-2 h-2 rounded-full bg-green-500"></span> 正常
+                    <span className="w-2 h-2 rounded-full bg-green-500"></span>{" "}
+                    正常
                   </span>
                   <span className="flex items-center gap-1">
-                    <span className="w-2 h-2 rounded-full bg-amber-400"></span> 遅延(800ms+)
+                    <span className="w-2 h-2 rounded-full bg-amber-400"></span>{" "}
+                    遅延(800ms+)
                   </span>
                   <span className="flex items-center gap-1">
-                    <span className="w-2 h-2 rounded-full bg-yellow-500"></span> 遅延(1.2s+)
+                    <span className="w-2 h-2 rounded-full bg-yellow-500"></span>{" "}
+                    遅延(1.2s+)
                   </span>
                   <span className="flex items-center gap-1">
-                    <span className="w-2 h-2 rounded-full bg-red-500"></span> エラー
+                    <span className="w-2 h-2 rounded-full bg-red-500"></span>{" "}
+                    エラー
                   </span>
                 </div>
               </div>
@@ -872,7 +953,9 @@ function App() {
                       </div>
                       <div className="text-right">
                         {task.success ? (
-                          <span className={`font-mono ${getLogTextColor(task.processingTimeMs, task.success)}`}>
+                          <span
+                            className={`font-mono ${getLogTextColor(task.processingTimeMs, task.success)}`}
+                          >
                             {task.processingTimeMs}ms
                           </span>
                         ) : (
