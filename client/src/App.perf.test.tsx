@@ -21,21 +21,25 @@ class MockWebSocket {
   close() {}
   static reset() { MockWebSocket.instances = []; }
 }
-global.WebSocket = MockWebSocket as any;
-
 const mockFetch = jest.fn();
-global.fetch = mockFetch;
 
 describe('App Performance', () => {
+  const originalWebSocket = global.WebSocket;
+  const originalFetch = global.fetch;
+
   beforeEach(() => {
     jest.clearAllMocks();
     MockWebSocket.reset();
+    global.WebSocket = MockWebSocket as any;
+    global.fetch = mockFetch;
     mockFetch.mockReset();
     jest.useFakeTimers();
   });
 
   afterEach(() => {
     jest.useRealTimers();
+    global.WebSocket = originalWebSocket;
+    global.fetch = originalFetch;
   });
 
   it('should fetch worker configs in parallel', async () => {
@@ -53,9 +57,9 @@ describe('App Performance', () => {
 
     const ws = MockWebSocket.instances[0];
     const workers = [
-        { name: 'w1', id: '1', status: 'healthy', enabled: true },
-        { name: 'w2', id: '2', status: 'healthy', enabled: true },
-        { name: 'w3', id: '3', status: 'healthy', enabled: true }
+        { name: 'w1', id: '1', url: '', color: '#3b82f6', weight: 1, maxLoad: 5, healthy: true, currentLoad: 0, enabled: true, totalRequests: 0, failedRequests: 0, circuitOpen: false },
+        { name: 'w2', id: '2', url: '', color: '#22c55e', weight: 1, maxLoad: 5, healthy: true, currentLoad: 0, enabled: true, totalRequests: 0, failedRequests: 0, circuitOpen: false },
+        { name: 'w3', id: '3', url: '', color: '#eab308', weight: 1, maxLoad: 5, healthy: true, currentLoad: 0, enabled: true, totalRequests: 0, failedRequests: 0, circuitOpen: false }
     ];
 
     // Trigger update

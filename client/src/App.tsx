@@ -168,20 +168,21 @@ function App() {
   );
 
   useEffect(() => {
-    if (!status?.workers) return;
+    if (!workerNames) return;
 
     const fetchConfigs = async () => {
       const configs: Record<string, WorkerConfig> = {};
+      const names = workerNames.split(",");
       await Promise.all(
-        status.workers.map(async (worker) => {
+        names.map(async (name) => {
           try {
-            const response = await fetch(`${API_URL}/workers/${worker.name}/config`);
+            const response = await fetch(`${API_URL}/workers/${name}/config`);
             if (response.ok) {
               const data = await response.json();
-              configs[worker.name] = data;
+              configs[name] = data;
             }
           } catch (e) {
-            console.error(`Failed to fetch config for ${worker.name}:`, e);
+            console.error(`Failed to fetch config for ${name}:`, e);
           }
         })
       );
@@ -189,7 +190,7 @@ function App() {
     };
 
     fetchConfigs();
-  }, [workerNames, status?.workers]);
+  }, [workerNames]);
 
   const sendTask = useCallback(async () => {
     const taskId = `task-${++taskIdRef.current}`;
