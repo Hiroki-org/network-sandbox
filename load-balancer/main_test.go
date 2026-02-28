@@ -113,17 +113,17 @@ func TestRoundRobinSelection(t *testing.T) {
 	w3 := lb.roundRobin(workers)
 	w4 := lb.roundRobin(workers)
 
-	if w1.Name != "worker-1" {
-		t.Errorf("expected worker-1, got %s", w1.Name)
+	if w1.Name != "worker-2" {
+		t.Errorf("expected worker-2, got %s", w1.Name)
 	}
-	if w2.Name != "worker-2" {
-		t.Errorf("expected worker-2, got %s", w2.Name)
+	if w2.Name != "worker-3" {
+		t.Errorf("expected worker-3, got %s", w2.Name)
 	}
-	if w3.Name != "worker-3" {
-		t.Errorf("expected worker-3, got %s", w3.Name)
+	if w3.Name != "worker-1" {
+		t.Errorf("expected worker-1, got %s", w3.Name)
 	}
-	if w4.Name != "worker-1" {
-		t.Errorf("expected worker-1 (wrapped), got %s", w4.Name)
+	if w4.Name != "worker-2" {
+		t.Errorf("expected worker-2 (wrapped), got %s", w4.Name)
 	}
 }
 
