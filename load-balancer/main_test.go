@@ -30,8 +30,7 @@ func TestNewLoadBalancer(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			lb := NewLoadBalancer()
-			lb.SetAlgorithm(tt.algorithm)
+			lb := NewLoadBalancer(tt.algorithm)
 			if lb == nil {
 				t.Fatal("NewLoadBalancer returned nil")
 			}
@@ -49,9 +48,9 @@ func TestNewLoadBalancer(t *testing.T) {
 }
 
 func TestAddWorker(t *testing.T) {
-	lb := NewLoadBalancer()
+	lb := NewLoadBalancer("round-robin")
 
-	lb.AddWorker("test-worker", "http://localhost:8080", "#FF0000", 2, 10)
+	lb.AddWorker("test-worker", "http://localhost:8080", "#FF0000", 2)
 
 	if len(lb.workers) != 1 {
 		t.Fatalf("expected 1 worker, got %d", len(lb.workers))
@@ -76,10 +75,10 @@ func TestAddWorker(t *testing.T) {
 }
 
 func TestGetHealthyWorkers(t *testing.T) {
-	lb := NewLoadBalancer()
-	lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 1, 10)
-	lb.AddWorker("worker-2", "http://localhost:8082", "#00FF00", 1, 10)
-	lb.AddWorker("worker-3", "http://localhost:8083", "#0000FF", 1, 10)
+	lb := NewLoadBalancer("round-robin")
+	lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 1)
+	lb.AddWorker("worker-2", "http://localhost:8082", "#00FF00", 1)
+	lb.AddWorker("worker-3", "http://localhost:8083", "#0000FF", 1)
 
 	// Mark worker-2 as unhealthy
 	lb.workers[1].Healthy = false
@@ -99,17 +98,12 @@ func TestGetHealthyWorkers(t *testing.T) {
 }
 
 func TestRoundRobinSelection(t *testing.T) {
-	lb := NewLoadBalancer()
-	lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 1, 10)
-	lb.AddWorker("worker-2", "http://localhost:8082", "#00FF00", 1, 10)
-	lb.AddWorker("worker-3", "http://localhost:8083", "#0000FF", 1, 10)
+	lb := NewLoadBalancer("round-robin")
+	lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 1)
+	lb.AddWorker("worker-2", "http://localhost:8082", "#00FF00", 1)
+	lb.AddWorker("worker-3", "http://localhost:8083", "#0000FF", 1)
 
-	workers := make([]*Worker, 0)
-	for _, w := range lb.workers {
-		if w.Healthy && w.Enabled && !w.CircuitOpen {
-			workers = append(workers, w)
-		}
-	}
+	workers := lb.getHealthyWorkers()
 
 	// Test round-robin distribution
 	w1 := lb.roundRobin(workers)
@@ -132,22 +126,17 @@ func TestRoundRobinSelection(t *testing.T) {
 }
 
 func TestLeastConnectionsSelection(t *testing.T) {
-	lb := NewLoadBalancer()
-	lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 1, 10)
-	lb.AddWorker("worker-2", "http://localhost:8082", "#00FF00", 1, 10)
-	lb.AddWorker("worker-3", "http://localhost:8083", "#0000FF", 1, 10)
+	lb := NewLoadBalancer("least-connections")
+	lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 1)
+	lb.AddWorker("worker-2", "http://localhost:8082", "#00FF00", 1)
+	lb.AddWorker("worker-3", "http://localhost:8083", "#0000FF", 1)
 
 	// Set different load levels
 	atomic.StoreInt32(&lb.workers[0].CurrentLoad, 5)
 	atomic.StoreInt32(&lb.workers[1].CurrentLoad, 2)
 	atomic.StoreInt32(&lb.workers[2].CurrentLoad, 8)
 
-	workers := make([]*Worker, 0)
-	for _, w := range lb.workers {
-		if w.Healthy && w.Enabled && !w.CircuitOpen {
-			workers = append(workers, w)
-		}
-	}
+	workers := lb.getHealthyWorkers()
 	selected := lb.leastConnections(workers)
 
 	if selected.Name != "worker-2" {
@@ -156,17 +145,12 @@ func TestLeastConnectionsSelection(t *testing.T) {
 }
 
 func TestWeightedSelection(t *testing.T) {
-	lb := NewLoadBalancer()
-	lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 1, 10)
-	lb.AddWorker("worker-2", "http://localhost:8082", "#00FF00", 3, 10)
-	lb.AddWorker("worker-3", "http://localhost:8083", "#0000FF", 1, 10)
+	lb := NewLoadBalancer("weighted")
+	lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 1)
+	lb.AddWorker("worker-2", "http://localhost:8082", "#00FF00", 3)
+	lb.AddWorker("worker-3", "http://localhost:8083", "#0000FF", 1)
 
-	workers := make([]*Worker, 0)
-	for _, w := range lb.workers {
-		if w.Healthy && w.Enabled && !w.CircuitOpen {
-			workers = append(workers, w)
-		}
-	}
+	workers := lb.getHealthyWorkers()
 
 	// Count selections over many iterations
 	counts := make(map[string]int)
@@ -183,17 +167,12 @@ func TestWeightedSelection(t *testing.T) {
 }
 
 func TestRandomSelection(t *testing.T) {
-	lb := NewLoadBalancer()
-	lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 1, 10)
-	lb.AddWorker("worker-2", "http://localhost:8082", "#00FF00", 1, 10)
-	lb.AddWorker("worker-3", "http://localhost:8083", "#0000FF", 1, 10)
+	lb := NewLoadBalancer("random")
+	lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 1)
+	lb.AddWorker("worker-2", "http://localhost:8082", "#00FF00", 1)
+	lb.AddWorker("worker-3", "http://localhost:8083", "#0000FF", 1)
 
-	workers := make([]*Worker, 0)
-	for _, w := range lb.workers {
-		if w.Healthy && w.Enabled && !w.CircuitOpen {
-			workers = append(workers, w)
-		}
-	}
+	workers := lb.getHealthyWorkers()
 
 	// Run random selection multiple times
 	counts := make(map[string]int)
@@ -211,7 +190,7 @@ func TestRandomSelection(t *testing.T) {
 }
 
 func TestSetAlgorithm(t *testing.T) {
-	lb := NewLoadBalancer()
+	lb := NewLoadBalancer("round-robin")
 
 	lb.SetAlgorithm("least-connections")
 
@@ -226,8 +205,8 @@ func TestSetAlgorithm(t *testing.T) {
 }
 
 func TestRecordSuccess(t *testing.T) {
-	lb := NewLoadBalancer()
-	lb.AddWorker("test-worker", "http://localhost:8080", "#FF0000", 1, 10)
+	lb := NewLoadBalancer("round-robin")
+	lb.AddWorker("test-worker", "http://localhost:8080", "#FF0000", 1)
 
 	worker := lb.workers[0]
 	worker.ConsecFailures = 5
@@ -240,8 +219,8 @@ func TestRecordSuccess(t *testing.T) {
 }
 
 func TestRecordFailure(t *testing.T) {
-	lb := NewLoadBalancer()
-	lb.AddWorker("test-worker", "http://localhost:8080", "#FF0000", 1, 10)
+	lb := NewLoadBalancer("round-robin")
+	lb.AddWorker("test-worker", "http://localhost:8080", "#FF0000", 1)
 
 	worker := lb.workers[0]
 	initialFailures := worker.ConsecFailures
@@ -254,9 +233,9 @@ func TestRecordFailure(t *testing.T) {
 }
 
 func TestCircuitBreaker(t *testing.T) {
-	lb := NewLoadBalancer()
+	lb := NewLoadBalancer("round-robin")
 	lb.circuitThreshold = 3
-	lb.AddWorker("test-worker", "http://localhost:8080", "#FF0000", 1, 10)
+	lb.AddWorker("test-worker", "http://localhost:8080", "#FF0000", 1)
 
 	worker := lb.workers[0]
 
@@ -271,9 +250,9 @@ func TestCircuitBreaker(t *testing.T) {
 }
 
 func TestGetStatus(t *testing.T) {
-	lb := NewLoadBalancer()
-	lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 1, 10)
-	lb.AddWorker("worker-2", "http://localhost:8082", "#00FF00", 2, 10)
+	lb := NewLoadBalancer("round-robin")
+	lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 1)
+	lb.AddWorker("worker-2", "http://localhost:8082", "#00FF00", 2)
 
 	atomic.StoreInt32(&lb.workers[0].CurrentLoad, 3)
 	atomic.StoreInt64(&lb.workers[0].TotalRequests, 100)
@@ -333,8 +312,8 @@ func TestHealthEndpoint(t *testing.T) {
 }
 
 func TestStatusEndpoint(t *testing.T) {
-	lb := NewLoadBalancer()
-	lb.AddWorker("test-worker", "http://localhost:8080", "#FF0000", 1, 10)
+	lb := NewLoadBalancer("round-robin")
+	lb.AddWorker("test-worker", "http://localhost:8080", "#FF0000", 1)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
@@ -362,7 +341,7 @@ func TestStatusEndpoint(t *testing.T) {
 }
 
 func TestAlgorithmEndpointGet(t *testing.T) {
-	lb := NewLoadBalancer()
+	lb := NewLoadBalancer("round-robin")
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/algorithm", func(w http.ResponseWriter, r *http.Request) {
@@ -395,7 +374,7 @@ func TestAlgorithmEndpointGet(t *testing.T) {
 }
 
 func TestAlgorithmEndpointPut(t *testing.T) {
-	lb := NewLoadBalancer()
+	lb := NewLoadBalancer("round-robin")
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/algorithm", func(w http.ResponseWriter, r *http.Request) {
@@ -433,7 +412,7 @@ func TestAlgorithmEndpointPut(t *testing.T) {
 }
 
 func TestTaskEndpointNoHealthyWorkers(t *testing.T) {
-	lb := NewLoadBalancer()
+	lb := NewLoadBalancer("round-robin")
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/task", func(w http.ResponseWriter, r *http.Request) {
@@ -526,10 +505,9 @@ func TestSelectWorkerWithDifferentAlgorithms(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			lb := NewLoadBalancer()
-			lb.SetAlgorithm(tt.algorithm)
-			lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 1, 10)
-			lb.AddWorker("worker-2", "http://localhost:8082", "#00FF00", 2, 10)
+			lb := NewLoadBalancer(tt.algorithm)
+			lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 1)
+			lb.AddWorker("worker-2", "http://localhost:8082", "#00FF00", 2)
 
 			worker := lb.SelectWorker()
 			if worker == nil {
@@ -540,8 +518,8 @@ func TestSelectWorkerWithDifferentAlgorithms(t *testing.T) {
 }
 
 func TestSelectWorkerReturnsNilWhenNoHealthyWorkers(t *testing.T) {
-	lb := NewLoadBalancer()
-	lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 1, 10)
+	lb := NewLoadBalancer("round-robin")
+	lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 1)
 
 	// Mark all workers as unhealthy
 	lb.workers[0].Healthy = false
@@ -553,9 +531,9 @@ func TestSelectWorkerReturnsNilWhenNoHealthyWorkers(t *testing.T) {
 }
 
 func TestConcurrentWorkerAccess(t *testing.T) {
-	lb := NewLoadBalancer()
-	lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 1, 10)
-	lb.AddWorker("worker-2", "http://localhost:8082", "#00FF00", 1, 10)
+	lb := NewLoadBalancer("round-robin")
+	lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 1)
+	lb.AddWorker("worker-2", "http://localhost:8082", "#00FF00", 1)
 
 	var wg sync.WaitGroup
 	for i := 0; i < 100; i++ {
@@ -583,8 +561,8 @@ func TestConcurrentWorkerAccess(t *testing.T) {
 }
 
 func TestBroadcastStatus(t *testing.T) {
-	lb := NewLoadBalancer()
-	lb.AddWorker("test-worker", "http://localhost:8080", "#FF0000", 1, 10)
+	lb := NewLoadBalancer("round-robin")
+	lb.AddWorker("test-worker", "http://localhost:8080", "#FF0000", 1)
 
 	// Create a mock WebSocket connection
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -642,8 +620,8 @@ func TestGetEnvFunction(t *testing.T) {
 }
 
 func TestWorkerCurrentLoadTracking(t *testing.T) {
-	lb := NewLoadBalancer()
-	lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 1, 10)
+	lb := NewLoadBalancer("round-robin")
+	lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 1)
 
 	worker := lb.workers[0]
 
@@ -669,8 +647,8 @@ func TestWorkerCurrentLoadTracking(t *testing.T) {
 }
 
 func TestWorkerRequestCounters(t *testing.T) {
-	lb := NewLoadBalancer()
-	lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 1, 10)
+	lb := NewLoadBalancer("round-robin")
+	lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 1)
 
 	worker := lb.workers[0]
 
@@ -691,10 +669,10 @@ func TestWorkerRequestCounters(t *testing.T) {
 }
 
 func TestCircuitBreakerRecovery(t *testing.T) {
-	lb := NewLoadBalancer()
+	lb := NewLoadBalancer("round-robin")
 	lb.circuitThreshold = 2
 	lb.circuitRecovery = 50 * time.Millisecond
-	lb.AddWorker("test-worker", "http://localhost:8080", "#FF0000", 1, 10)
+	lb.AddWorker("test-worker", "http://localhost:8080", "#FF0000", 1)
 
 	worker := lb.workers[0]
 
@@ -715,8 +693,8 @@ func TestCircuitBreakerRecovery(t *testing.T) {
 }
 
 func TestInvalidTaskRequest(t *testing.T) {
-	lb := NewLoadBalancer()
-	lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 1, 10)
+	lb := NewLoadBalancer("round-robin")
+	lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 1)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/task", func(w http.ResponseWriter, r *http.Request) {
@@ -816,17 +794,11 @@ func TestTaskRequestStructure(t *testing.T) {
 }
 
 func TestWorkerWithZeroWeight(t *testing.T) {
-	lb := NewLoadBalancer()
-	lb.SetAlgorithm("weighted")
-	lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 0, 10)
-	lb.AddWorker("worker-2", "http://localhost:8082", "#00FF00", 2, 10)
+	lb := NewLoadBalancer("weighted")
+	lb.AddWorker("worker-1", "http://localhost:8081", "#FF0000", 0)
+	lb.AddWorker("worker-2", "http://localhost:8082", "#00FF00", 2)
 
-	workers := make([]*Worker, 0)
-	for _, w := range lb.workers {
-		if w.Healthy && w.Enabled && !w.CircuitOpen {
-			workers = append(workers, w)
-		}
-	}
+	workers := lb.getHealthyWorkers()
 
 	// Should still work, but worker-1 will never be selected due to 0 weight
 	selected := lb.weighted(workers)
