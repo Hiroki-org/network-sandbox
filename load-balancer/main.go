@@ -155,7 +155,7 @@ func (lb *LoadBalancer) SelectWorker() *Worker {
 }
 
 func (lb *LoadBalancer) roundRobin(workers []*Worker) *Worker {
-	idx := atomic.AddUint64(&lb.roundRobinIdx, 1)
+	idx := atomic.AddUint64(&lb.roundRobinIdx, 1) - 1
 	return workers[idx%uint64(len(workers))]
 }
 
