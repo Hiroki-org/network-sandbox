@@ -468,6 +468,9 @@ func handleWorker(w http.ResponseWriter, r *http.Request) {
 	}
 
 	path := strings.TrimPrefix(r.URL.Path, "/workers/")
+	if strings.HasPrefix(r.URL.Path, "/api/workers/") {
+		path = strings.TrimPrefix(r.URL.Path, "/api/workers/")
+	}
 	name := strings.TrimSuffix(path, "/")
 	if name == "" {
 		http.Error(w, "Worker name required", http.StatusBadRequest)
@@ -507,6 +510,9 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 func handleWorkerConfig(w http.ResponseWriter, r *http.Request) {
 	// Extract worker name from path: /workers/{name}/config
 	path := strings.TrimPrefix(r.URL.Path, "/workers/")
+	if strings.HasPrefix(r.URL.Path, "/api/workers/") {
+		path = strings.TrimPrefix(r.URL.Path, "/api/workers/")
+	}
 	parts := strings.Split(path, "/")
 	if len(parts) < 2 || parts[1] != "config" {
 		http.Error(w, "Invalid path", http.StatusBadRequest)
@@ -584,6 +590,22 @@ func handleWorkerConfig(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(resp.StatusCode)
 		w.Write(body)
 	}
+}
+
+func handleConfigRanges(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"requests_per_second": map[string]int{"min": 1, "max": 100},
+		"task_weight": map[string]float64{"min": 0.1, "max": 10},
+		"response_delay_ms": map[string]int{"min": 0, "max": 5000},
+		"failure_rate": map[string]int{"min": 0, "max": 100},
+		"max_concurrent_requests": map[string]int{"min": 1, "max": 50},
+	})
 }
 
 // handleWebSocket は HTTP 接続を WebSocket にアップグレードし、クライアントを登録して状態を送信し、接続が切断されるまで受信を監視します。
@@ -678,14 +700,29 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/task", handleTask)
+	mux.HandleFunc("/api/task", handleTask)
 	mux.HandleFunc("/status", handleStatus)
+	mux.HandleFunc("/api/status", handleStatus)
 	mux.HandleFunc("/algorithm", handleAlgorithm)
+	mux.HandleFunc("/api/algorithm", handleAlgorithm)
 	mux.HandleFunc("/health", handleHealth)
+	mux.HandleFunc("/api/health", handleHealth)
+	mux.HandleFunc("/api/config/ranges", handleConfigRanges)
 	mux.HandleFunc("/ws", handleWebSocket)
+	mux.HandleFunc("/api/ws", handleWebSocket)
 	// Worker routes - use segment matching for safety
 	mux.HandleFunc("/workers/", func(w http.ResponseWriter, r *http.Request) {
 		// Route based on path segments to avoid misrouting worker names containing "config"
 		path := strings.TrimPrefix(r.URL.Path, "/workers/")
+		parts := strings.Split(strings.TrimSuffix(path, "/"), "/")
+		if len(parts) == 2 && parts[1] == "config" {
+			handleWorkerConfig(w, r)
+		} else {
+			handleWorker(w, r)
+		}
+	})
+	mux.HandleFunc("/api/workers/", func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, "/api/workers/")
 		parts := strings.Split(strings.TrimSuffix(path, "/"), "/")
 		if len(parts) == 2 && parts[1] == "config" {
 			handleWorkerConfig(w, r)
